@@ -1,11 +1,13 @@
 openapi: "3.0.2"
 info:
   description: "This is the Scoold API. First, you need to generate an [API key](/admin) in order to access the API."
-  version: "1.2.0"
+  version: "1.5.0"
   title: "Scoold API documentation"
 externalDocs:
   description: "README"
   url: "https://github.com/Erudika/scoold"
+servers:
+  - url: {{serverUrl}}{{contextPath}}
 tags:
 - name: "posts"
 - name: "users"
@@ -41,7 +43,7 @@ paths:
   /api/posts:
     post:
       summary: Create a new post
-      description: To publish the post in the given space, set the `space` field. Otherwise the post will be created in the default space.<br>To change the author, set the `creatorid` field to an existing user.
+      description: To publish the post in the given space, set the `space` field. Otherwise the post will be created in the default space.<br>To change the author, set the `creatorid` field to an existing user.<br>To create an answer, set field `type` to `reply` and specify `parentid` to be the ID of the question post.<br>The `body` of the post can contain GitHub-flavored Markdown and mentions like `@<user_id|John Doe>`.
       tags:
         - posts
       security:
@@ -91,6 +93,18 @@ paths:
           schema:
             type: string
             enum: [favtags, local]
+        - name: q
+          in: query
+          required: false
+          description: Allows for an additional fine tuned query to be applied to the other filters.
+          schema:
+            type: string
+        - name: includeReplies
+          in: query
+          required: false
+          description: If `true`, answers will be returned embedded inside the `children` array property of each question object.
+          schema:
+            type: boolean
         - name: favtags
           in: query
           required: false
@@ -204,6 +218,53 @@ paths:
           description: Post was deleted
         '404':
           description: Not found
+  /api/posts/{id}/tags:
+    patch:
+      summary: Edit question tags
+      description: Add or remove question tags. To change the user who edited the question, specify `lasteditby` in the request body.
+      tags:
+        - posts
+      security:
+      - scoold_auth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The id of the post to update
+          schema:
+            type: string
+      requestBody:
+        description: The request entity
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                add:
+                  description: A list of tags to add to the question
+                  type: array
+                  items:
+                    type: string
+                remove:
+                  description: A list of tags to remove from the question
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Post was updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '400':
+          description: Bad request - missing or invalid request entity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Post not found
   /api/posts/{id}/approve:
     put:
       summary: Approve a post which awaits approval by a moderator
@@ -711,7 +772,6 @@ paths:
                   type: array
                   items:
                     type: string
-
       responses:
         '200':
           description: Spaces were updated
@@ -1041,6 +1101,13 @@ paths:
         - spaces
       security:
       - scoold_auth: []
+      parameters:
+        - name: assigntoall
+          in: query
+          required: false
+          description: If `true`, space will be assigned to all new and existing users
+          schema:
+            type: boolean
       requestBody:
         required: true
         content:
@@ -1101,6 +1168,39 @@ paths:
                   $ref: '#/components/schemas/Space'
         '404':
           description: Not found
+    patch:
+      summary: Rename space
+      tags:
+        - spaces
+      security:
+      - scoold_auth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The id of an existing space
+          schema:
+            type: string
+        - name: assigntoall
+          in: query
+          required: false
+          description: If `true`, space will be assigned to all new and existing users
+          schema:
+            type: boolean
+      requestBody:
+        required: true
+        description: The request body must contain the `name` field as the new name for that space.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Space'
+      responses:
+        '200':
+          description: Space object returned
+          content:
+            application/json:
+                schema:
+                  $ref: '#/components/schemas/Space'
     delete:
       summary: Delete space
       tags:
@@ -1339,7 +1439,7 @@ paths:
                 format: binary
   /api/restore:
     put:
-      summary: Restores a backup ZIP archive, overwriting all existing data in Scoold
+      summary: Restores (asynchronously) a backup ZIP archive, overwriting all existing data in Scoold
       tags:
         - backups
       security:
@@ -1348,13 +1448,17 @@ paths:
         description: A ZIP backup archive
         required: true
         content:
-          application/zip:
-              schema:
-                type: string
-                format: binary
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  description: The binary zip file to restore data from.
+                  type: string
+                  format: binary
       responses:
         '200':
-          description: restore was successful
+          description: Restore operation hast started but is not necessarily complete.
   /api/config:
     get:
       summary: Returns the current Scoold configuration as a list of properties in the HOCON or JSON formats.
@@ -1495,6 +1599,7 @@ components:
           type: string
         body:
           type: string
+          description: Can contain GitHub-flavored Markdown and mentions like `@<user_id|John Doe>` also basic HTML tags if those are explicitly enabled.
         tags:
           type: array
           items:
@@ -1502,6 +1607,9 @@ components:
         creatorid:
           type: string
           description: The `id` of the author of this post (an existing user)
+        parentid:
+          type: string
+          description: The `id` of the parent question when the post is an answer
         location:
           type: string
           description: The location name associated with this post

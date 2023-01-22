@@ -2,7 +2,7 @@
 set -e -x
 
 # Lightsail/DigitalOcean installer script for Ubuntu
-VERSION="1.50.0"
+VERSION="1.52.0"
 PORT="8000"
 WORKDIR="/home/ubuntu"
 JARURL="https://github.com/Erudika/scoold/releases/download/${VERSION}/scoold-${VERSION}.jar"
@@ -23,9 +23,9 @@ scoold.port = 8000
 scoold.env = "production"
 scoold.host_url = "http://localhost:8000"
 scoold.para_endpoint = "https://paraio.com"
-scoold.para_access_key = "app:myapp"
+scoold.para_access_key = "app:scoold"
 scoold.para_secret_key = ""
-scoold.admins = "admin@domain.com"
+scoold.admins = "admin@example.com"
 EOF
 
 touch $sfile
@@ -33,11 +33,15 @@ cat << EOF > $sfile
 [Unit]
 Description=Scoold
 After=syslog.target
+StartLimitIntervalSec=30
+StartLimitBurst=2
 [Service]
 WorkingDirectory=${WORKDIR}
 SyslogIdentifier=Scoold
 ExecStart=java -jar -Dconfig.file=application.conf scoold.jar
 User=ubuntu
+Restart=on-failure
+RestartSec=1s
 [Install]
 WantedBy=multi-user.target
 EOF

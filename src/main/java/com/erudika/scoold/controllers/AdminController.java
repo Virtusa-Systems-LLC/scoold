@@ -39,6 +39,7 @@ import com.erudika.scoold.core.Profile;
 import com.erudika.scoold.core.Question;
 import com.erudika.scoold.core.Reply;
 import com.erudika.scoold.utils.ScooldUtils;
+import static com.erudika.scoold.utils.ScooldUtils.MAX_SPACES;
 import com.erudika.scoold.utils.Version;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -101,7 +102,6 @@ public class AdminController {
 
 	private static final Logger logger = LoggerFactory.getLogger(AdminController.class);
 	private static final ScooldConfig CONF = ScooldUtils.getConfig();
-	private static final int MAX_SPACES = 10; // Hey! It's cool to edit this, but please consider buying Scoold Pro! :)
 	private final String soDateFormat1 = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'";
 	private final String soDateFormat2 = "yyyy-MM-dd'T'HH:mm:ss'Z'";
 	private final ScooldUtils utils;
@@ -135,7 +135,7 @@ public class AdminController {
 		model.addAttribute("version", pc.getServerVersion());
 		model.addAttribute("endpoint", CONF.redirectUri());
 		model.addAttribute("paraapp", CONF.paraAccessKey());
-		model.addAttribute("spaces", pc.findQuery("scooldspace", "*", itemcount));
+		model.addAttribute("spaces", getSpaces(itemcount));
 		model.addAttribute("webhooks", pc.findQuery(Utils.type(Webhook.class), "*", itemcount1));
 		model.addAttribute("scooldimports", pc.findQuery("scooldimport", "*", new Pager(7)));
 		model.addAttribute("coreScooldTypes", utils.getCoreScooldTypes());
@@ -163,19 +163,20 @@ public class AdminController {
 	}
 
 	@PostMapping("/add-space")
-	public String addSpace(@RequestParam String space, HttpServletRequest req, HttpServletResponse res, Model model) {
+	public String addSpace(@RequestParam String space,
+			@RequestParam(required = false, defaultValue = "false") Boolean assigntoall,
+			HttpServletRequest req, HttpServletResponse res, Model model) {
 		Profile authUser = utils.getAuthUser(req);
 		if (!StringUtils.isBlank(space) && utils.isAdmin(authUser)) {
 			Sysprop spaceObj = utils.buildSpaceObject(space);
 			if (utils.isDefaultSpace(spaceObj.getId()) || pc.getCount("scooldspace") >= MAX_SPACES ||
 					pc.read(spaceObj.getId()) != null) {
-				if (utils.isAjaxRequest(req)) {
-					res.setStatus(400);
-					return "space";
-				} else {
-					return "redirect:" + ADMINLINK + "?code=7&error=true";
-				}
+				model.addAttribute("error", Map.of("name", "Space exists or maximum number of spaces reached."));
 			} else {
+				if (assigntoall) {
+					spaceObj.setTags(List.of("assign-to-all"));
+					utils.assingSpaceToAllUsers(spaceObj);
+				}
 				if (pc.create(spaceObj) != null) {
 					authUser.getSpaces().add(spaceObj.getId() + Para.getConfig().separator() + spaceObj.getName());
 					authUser.update();
@@ -199,7 +200,7 @@ public class AdminController {
 	@PostMapping("/remove-space")
 	public String removeSpace(@RequestParam String space, HttpServletRequest req, HttpServletResponse res) {
 		Profile authUser = utils.getAuthUser(req);
-		if (!StringUtils.isBlank(space) && utils.isAdmin(authUser)) {
+		if (!StringUtils.isBlank(space) && !utils.isDefaultSpace(space) && utils.isAdmin(authUser)) {
 			Sysprop s = new Sysprop(utils.getSpaceId(space));
 			pc.delete(s);
 			authUser.getSpaces().remove(space);
@@ -215,36 +216,51 @@ public class AdminController {
 	}
 
 	@PostMapping("/rename-space")
-	public String renameSpace(@RequestParam String space, @RequestParam String newspace,
-			HttpServletRequest req, HttpServletResponse res) {
+	public String renameSpace(@RequestParam String space,
+			@RequestParam(required = false, defaultValue = "false") Boolean assigntoall,
+			@RequestParam String newspace, HttpServletRequest req, HttpServletResponse res) {
 		Profile authUser = utils.getAuthUser(req);
 		Sysprop s = pc.read(utils.getSpaceId(space));
-		if (s != null && utils.isAdmin(authUser)) {
+		if (s != null && !utils.isDefaultSpace(space) && utils.isAdmin(authUser)) {
 			String origSpace = s.getId() + Para.getConfig().separator() + s.getName();
-			int index = utils.getAllSpaces().indexOf(s);
-			s.setName(newspace);
-			pc.update(s);
-			if (index >= 0) {
-				utils.getAllSpaces().get(index).setName(newspace);
-			}
-			Pager pager = new Pager(1, "_docid", false, CONF.maxItemsPerPage());
-			LinkedList<Map<String, Object>> toUpdate = new LinkedList<>();
-			List<Profile> profiles;
-			do {
-				String query = "properties.spaces:(\"" + origSpace + "\")";
-				profiles = pc.findQuery(Utils.type(Profile.class), query, pager);
-				profiles.stream().forEach(p -> {
-					p.getSpaces().remove(origSpace);
-					p.getSpaces().add(s.getId() + Para.getConfig().separator() + s.getName());
-					Map<String, Object> profile = new HashMap<>();
-					profile.put(Config._ID, p.getId());
-					profile.put("spaces", p.getSpaces());
-					toUpdate.add(profile);
-				});
-				if (!toUpdate.isEmpty()) {
-					pc.invokePatch("_batch", toUpdate, Map.class);
+			String newSpace = s.getId() + Para.getConfig().separator() + newspace;
+			if (!origSpace.equals(newSpace)) {
+				int index = utils.getAllSpaces().indexOf(s);
+				s.setName(newspace);
+				pc.update(s);
+				if (index >= 0) {
+					utils.getAllSpaces().get(index).setName(newspace);
 				}
-			} while (!profiles.isEmpty());
+				pc.updateAllPartially((toUpdate, pager) -> {
+					String query = "properties.spaces:(\"" + origSpace + "\")";
+					List<Profile> profiles = pc.findQuery(Utils.type(Profile.class), query, pager);
+					profiles.stream().forEach(p -> {
+						p.getSpaces().remove(origSpace);
+						p.getSpaces().add(newSpace);
+						Map<String, Object> profile = new HashMap<>();
+						profile.put(Config._ID, p.getId());
+						profile.put("spaces", p.getSpaces());
+						toUpdate.add(profile);
+					});
+					return profiles;
+				});
+				pc.updateAllPartially((toUpdate, pager) -> {
+					String query = "properties.space:(\"" + origSpace + "\")";
+					List<Post> posts = pc.findQuery("", query, pager);
+					posts.stream().forEach(p -> {
+						Map<String, Object> post = new HashMap<>();
+						post.put(Config._ID, p.getId());
+						post.put("space", newSpace);
+						toUpdate.add(post);
+					});
+					return posts;
+				});
+			}
+			if (utils.isAutoAssignedSpace(s) ^ assigntoall) {
+				s.setTags(assigntoall ? List.of("assign-to-all") : List.of());
+				utils.assingSpaceToAllUsers(assigntoall ? s : null);
+				pc.update(s);
+			}
 		}
 		if (utils.isAjaxRequest(req)) {
 			res.setStatus(200);
@@ -743,5 +759,15 @@ public class AdminController {
 			pc.invokePatch("_batch", toPatch, Map.class);
 			toPatch.clear();
 		}
+	}
+
+	private List<Sysprop> getSpaces(Pager itemcount) {
+		List<Sysprop> spaces = new LinkedList<>(pc.findQuery("scooldspace", "*", itemcount));
+		LinkedList<Sysprop> list = new LinkedList<>(spaces.stream().
+				filter(s -> !utils.isDefaultSpace(s.getName())).collect(Collectors.toList()));
+		if (itemcount.getPage() <= 1) {
+			list.addFirst(utils.buildSpaceObject("default"));
+		}
+		return list;
 	}
 }

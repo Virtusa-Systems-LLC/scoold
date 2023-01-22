@@ -66,7 +66,7 @@ public class SigninController {
 		if (utils.isAuthenticated(req)) {
 			return "redirect:" + (StringUtils.startsWithIgnoreCase(returnto, SIGNINLINK) ? HOMEPAGE : getBackToUrl(req));
 		}
-		if (!HOMEPAGE.equals(returnto) && !SIGNINLINK.equals(returnto)) {
+		if (!HOMEPAGE.equals(returnto) && !StringUtils.startsWith(returnto, SIGNINLINK)) {
 			HttpUtils.setStateParam("returnto", Utils.urlEncode(getBackToUrl(req)), req, res);
 		} else {
 			HttpUtils.removeStateParam("returnto", req, res);
@@ -82,7 +82,7 @@ public class SigninController {
 		model.addAttribute("ghLoginEnabled", !CONF.githubAppId().isEmpty());
 		model.addAttribute("inLoginEnabled", !CONF.linkedinAppId().isEmpty());
 		model.addAttribute("twLoginEnabled", !CONF.twitterAppId().isEmpty());
-		model.addAttribute("msLoginEnabled", !CONF.microsoftAppId().isEmpty());
+		model.addAttribute("msLoginEnabled", utils.isMicrosoftAuthEnabled());
 		model.addAttribute("slLoginEnabled", utils.isSlackAuthEnabled());
 		model.addAttribute("azLoginEnabled", !CONF.amazonAppId().isEmpty());
 		model.addAttribute("oa2LoginEnabled", !CONF.oauthAppId("").isEmpty());
@@ -119,8 +119,8 @@ public class SigninController {
 			@RequestParam(name = "id", required = false) String id,
 			@RequestParam(name = "token", required = false) String token,
 			HttpServletRequest req, Model model) {
-		if (utils.isAuthenticated(req)) {
-			return "redirect:" + HOMEPAGE;
+		if (utils.isAuthenticated(req) || !CONF.passwordAuthEnabled()) {
+			return "redirect:" + SIGNINLINK;
 		}
 		model.addAttribute("path", "signin.vm");
 		model.addAttribute("title", utils.getLang(req).get("signup.title"));
@@ -148,10 +148,13 @@ public class SigninController {
 	@PostMapping("/signin/register")
 	public String signup(@RequestParam String name, @RequestParam String email, @RequestParam String passw,
 			HttpServletRequest req, HttpServletResponse res, Model model) {
+		if (!CONF.passwordAuthEnabled()) {
+			return "redirect:" + SIGNINLINK;
+		}
 		boolean approvedDomain = utils.isEmailDomainApproved(email);
 		if (!utils.isAuthenticated(req) && approvedDomain &&
 				HttpUtils.isValidCaptcha(req.getParameter("g-recaptcha-response"))) {
-			boolean goodPass = isPasswordStrongEnough(passw);
+			boolean goodPass = utils.isPasswordStrongEnough(passw);
 			if (!isEmailRegistered(email) && isSubmittedByHuman(req) && goodPass) {
 				User u = pc.signIn("password", email + ":" + name + ":" + passw, false);
 				if (u != null && u.getActive()) {
@@ -189,7 +192,7 @@ public class SigninController {
 					((long) ident.getProperty("confirmationTimestamp") + TimeUnit.HOURS.toMillis(6))) {
 					User u = pc.read(Utils.type(User.class), ident.getCreatorid());
 					if (u != null && !u.getActive()) {
-						utils.sendVerificationEmail(ident, req);
+						utils.sendVerificationEmail(ident, "", req);
 					}
 				} else {
 					logger.warn("Failed to send email confirmation to '{}' - this can only be done once every 6h.", email);
@@ -206,8 +209,8 @@ public class SigninController {
 			@RequestParam(name = "email", required = false) String email,
 			@RequestParam(name = "token", required = false) String token,
 			HttpServletRequest req, Model model) {
-		if (utils.isAuthenticated(req)) {
-			return "redirect:" + HOMEPAGE;
+		if (utils.isAuthenticated(req) || !CONF.passwordAuthEnabled()) {
+			return "redirect:" + SIGNINLINK;
 		}
 		model.addAttribute("path", "signin.vm");
 		model.addAttribute("title", utils.getLang(req).get("iforgot.title"));
@@ -228,6 +231,9 @@ public class SigninController {
 			@RequestParam(required = false) String newpassword,
 			@RequestParam(required = false) String token,
 			HttpServletRequest req, Model model) {
+		if (!CONF.passwordAuthEnabled()) {
+			return "redirect:" + SIGNINLINK;
+		}
 		boolean approvedDomain = utils.isEmailDomainApproved(email);
 		boolean validCaptcha = HttpUtils.isValidCaptcha(req.getParameter("g-recaptcha-response"));
 		if (!utils.isAuthenticated(req) && approvedDomain && validCaptcha) {
@@ -245,7 +251,7 @@ public class SigninController {
 				model.addAttribute("verified", !error);
 				model.addAttribute("captchakey", CONF.captchaSiteKey());
 				if (error) {
-					if (!isPasswordStrongEnough(newpassword)) {
+					if (!utils.isPasswordStrongEnough(newpassword)) {
 						model.addAttribute("error", Collections.singletonMap("newpassword", utils.getLang(req).get("msgcode.8")));
 					} else {
 						model.addAttribute("error", Collections.singletonMap("email", utils.getLang(req).get("msgcode.7")));
@@ -290,10 +296,7 @@ public class SigninController {
 
 	private void loginWithIdToken(String jwt, HttpServletRequest req, HttpServletResponse res) {
 		User u = pc.signIn("passwordless", jwt, false);
-		if (u != null) {
-			setAuthCookie(u.getPassword(), req, res);
-			onAuthSuccess(u, req, res);
-		}
+		onAuthSuccess(u, req, res);
 	}
 
 	private String onAuthSuccess(User u, HttpServletRequest req, HttpServletResponse res) {
@@ -358,33 +361,6 @@ public class SigninController {
 		return StringUtils.isBlank(req.getParameter("leaveblank")) && (System.currentTimeMillis() - time >= 7000);
 	}
 
-	private boolean isPasswordStrongEnough(String password) {
-		if (StringUtils.length(password) >= CONF.minPasswordLength()) {
-			int score = 0;
-			if (password.matches(".*[a-z].*")) {
-				score++;
-			}
-			if (password.matches(".*[A-Z].*")) {
-				score++;
-			}
-			if (password.matches(".*[0-9].*")) {
-				score++;
-			}
-			if (password.matches(".*[^\\w\\s\\n\\t].*")) {
-				score++;
-			}
-			// 1 = good strength, 2 = medium strength, 3 = high strength
-			if (CONF.minPasswordStrength() <= 1) {
-				return score >= 2;
-			} else if (CONF.minPasswordStrength() == 2) {
-				return score >= 3;
-			} else {
-				return score >= 4;
-			}
-		}
-		return false;
-	}
-
 	private String generatePasswordResetToken(String email, HttpServletRequest req) {
 		if (StringUtils.isBlank(email)) {
 			return "";
@@ -412,7 +388,7 @@ public class SigninController {
 	}
 
 	private boolean resetPassword(String email, String newpass, String token) {
-		if (StringUtils.isBlank(newpass) || StringUtils.isBlank(token) || !isPasswordStrongEnough(newpass)) {
+		if (StringUtils.isBlank(newpass) || StringUtils.isBlank(token) || !utils.isPasswordStrongEnough(newpass)) {
 			return false;
 		}
 		Sysprop s = pc.read(email);

@@ -77,6 +77,8 @@ public class Profile extends Sysprop {
 	@Stored private Integer monthlyVotes;
 	@Stored private Integer weeklyVotes;
 	@Stored private List<Map<String, String>> customBadges;
+	@Stored private String pendingEmail;
+	@Stored private Boolean editorRoleEnabled;
 
 	private transient String newbadges;
 	private transient Integer newreports;
@@ -146,6 +148,7 @@ public class Profile extends Sysprop {
 		this.weeklyVotes = 0;
 		this.anonymityEnabled = false;
 		this.darkmodeEnabled = false;
+		this.editorRoleEnabled = true;
 		this.favtagsEmailsEnabled = ScooldUtils.getConfig().favoriteTagsEmailsEnabled();
 		this.replyEmailsEnabled = ScooldUtils.getConfig().replyEmailsEnabled();
 		this.commentEmailsEnabled = ScooldUtils.getConfig().commentEmailsEnabled();
@@ -172,19 +175,7 @@ public class Profile extends Sysprop {
 		p.setGroups(ScooldUtils.getInstance().isRecognizedAsAdmin(u)
 				? User.Groups.ADMINS.toString() : u.getGroups());
 		// auto-assign spaces to new users
-		String space = StringUtils.substringBefore(ScooldUtils.getConfig().autoAssignSpaces(), ",");
-		if (!StringUtils.isBlank(space) && !ScooldUtils.getInstance().isDefaultSpace(space)) {
-			Sysprop s = client().read(ScooldUtils.getInstance().getSpaceId(space));
-			if (s == null) {
-				s = ScooldUtils.getInstance().buildSpaceObject(space);
-				client().create(s); // create the space it it's missing
-			}
-			if (ScooldUtils.getConfig().resetSpacesOnNewAssignment(u.isOAuth2User() || u.isLDAPUser() || u.isSAMLUser())) {
-				p.setSpaces(Collections.singleton(s.getId() + Para.getConfig().separator() + s.getName()));
-			} else {
-				p.getSpaces().add(s.getId() + Para.getConfig().separator() + s.getName());
-			}
-		}
+		ScooldUtils.getInstance().assignSpacesToUser(p, ScooldUtils.getInstance().getAllAutoAssignedSpaces());
 		return p;
 	}
 
@@ -329,6 +320,14 @@ public class Profile extends Sysprop {
 		this.customBadges = customBadges;
 	}
 
+	public String getPendingEmail() {
+		return pendingEmail;
+	}
+
+	public void setPendingEmail(String pendingEmail) {
+		this.pendingEmail = pendingEmail;
+	}
+
 	public List<String> getFavtags() {
 		if (favtags == null) {
 			favtags = new LinkedList<String>();
@@ -353,8 +352,11 @@ public class Profile extends Sysprop {
 
 	public Set<String> getSpaces() {
 		if (ScooldUtils.getInstance().isMod(this)) {
-			spaces = ScooldUtils.getInstance().getAllSpaces().stream().
-					map(s -> s.getId() + Para.getConfig().separator() + s.getName()).collect(Collectors.toSet());
+			ScooldUtils utils = ScooldUtils.getInstance();
+			spaces = utils.getAllSpaces().stream().
+					map(s -> s.getId() + Para.getConfig().separator() + s.getName()).
+					sorted((s1, s2) -> utils.getSpaceName(s1).compareToIgnoreCase(utils.getSpaceName(s2))).
+					collect(Collectors.toCollection(LinkedHashSet::new));
 		}
 		if (spaces == null) {
 			spaces = new LinkedHashSet<String>();
@@ -375,7 +377,10 @@ public class Profile extends Sysprop {
 
 	@JsonIgnore
 	public Set<String> getAllSpaces() {
-		return getSpaces().stream().filter(s -> !s.equalsIgnoreCase(Post.DEFAULT_SPACE)).collect(Collectors.toSet());
+		ScooldUtils utils = ScooldUtils.getInstance();
+		return getSpaces().stream().filter(s -> !s.equalsIgnoreCase(Post.DEFAULT_SPACE)).
+				sorted((s1, s2) -> utils.getSpaceName(s1).compareToIgnoreCase(utils.getSpaceName(s2))).
+				collect(Collectors.toCollection(LinkedHashSet::new));
 	}
 
 	public Long getLastseen() {
@@ -464,6 +469,18 @@ public class Profile extends Sysprop {
 
 	public void setOriginalPicture(String originalPicture) {
 		this.originalPicture = originalPicture;
+	}
+
+	public Boolean getEditorRoleEnabled() {
+		return editorRoleEnabled;
+	}
+
+	public void setEditorRoleEnabled(Boolean editorRoleEnabled) {
+		this.editorRoleEnabled = editorRoleEnabled;
+	}
+
+	public boolean isEditorRoleEnabled() {
+		return Boolean.valueOf(editorRoleEnabled);
 	}
 
 	@SuppressWarnings("unchecked")

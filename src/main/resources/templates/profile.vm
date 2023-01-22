@@ -290,7 +290,11 @@
 							</span>
 						#end
 						#foreach($space in $userSpaces)
-							#set($spaceString = $scooldUtils.getSpaceName($space))
+							#if($scooldUtils.isDefaultSpace($space))
+								#set($spaceString = $!lang.get('defaultspace'))
+							#else
+								#set($spaceString = $scooldUtils.getSpaceName($space))
+							#end
 							#if($userSpaces.size() > 5)
 							<div class="col m6 l4">
 							#end
@@ -331,6 +335,26 @@
 								<input id="location_text" name="location" class="locationbox validate" type="text" value="$!{showUser.location}"
 											 placeholder="$!{lang.get('profile.about.location')}">
 							</div>
+						</div>
+					</div>
+
+					<div class="row valign-wrapper">
+						<div class="col s12 m6">
+							<div class="input-field">
+								<i class="fa fa-envelope-o prefix grey-text"></i>
+								<label for="email_text">$!{lang.get("signup.form.email")}</label>
+								<input type="email" id="email_text" value="#if($showUser.pendingEmail)$!{showUser.pendingEmail}#else$!{showUser.user.email}#end"
+											 #if($showUser.user.identityProvider == "generic") name="email"#else name="na" disabled#end>
+							</div>
+						</div>
+						<div class="col s12 m6">
+							#if($showUser.pendingEmail)
+								<i class="fa fa-exclamation-circle fa-lg orange-text tooltipped" data-tooltip="Unverified"></i>&nbsp;
+								<a href="$profilelink/retry-change-email" class="post-refresh">$!lang.get('signup.resend')</a> &nbsp;
+								<a href="$profilelink/cancel-change-email" class="post-refresh red-text">$!lang.get('cancel')</a>
+							#else
+								<i class="fa fa-check-circle-o fa-lg green-text tooltipped" data-tooltip="Verified"></i>
+							#end
 						</div>
 					</div>
 

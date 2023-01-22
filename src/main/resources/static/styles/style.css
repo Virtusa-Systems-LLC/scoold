@@ -290,6 +290,8 @@ i.close:before {
 .downvote:hover, .downvote.cast {color: #F44336;}
 
 blockquote { border-left: 5px solid #888888; }
+pre { overflow: auto; }
+
 .editor-preview ul>li {
 	list-style-type: disc;
 }
@@ -330,8 +332,9 @@ img.profile-pic {
 	object-fit: cover;
 	height: 100%;
 }
-.user-card img.profile-pic {
+.user-card img.profile-pic, .user-card-compact img.profile-pic {
 	width: 100%;
+	padding: 6px 0px 0px 6px;
 }
 img.profile-pic:before {
   content: " ";
@@ -344,6 +347,19 @@ img.profile-pic:before {
 	background-position: center;
 	background-size: cover;
 	color: transparent;
+}
+.user-card-compact {
+	min-height: 48px;
+}
+.user-card-compact, .user-card-compact .badgebox {
+	font-size: smaller;
+}
+.card.personbox.compact, .card.personbox.compact > .user-card-compact {
+	margin-bottom: 5px;
+}
+.personbox .user-card-compact img.profile-pic:before {
+	height: 69%;
+	width: 6%;
 }
 .personbox img.profile-pic:before {
   height: 89%;
@@ -429,6 +445,13 @@ img.profile-pic:before {
 .swagger-ui .response-col_links {
 	display: none;
 }
+.swagger-ui select {
+	opacity: 1;
+	height: 2.4rem;
+	width: auto;
+	font-size: 16px;
+	margin: 0px;
+}
 
 #passw.pass-meter, #newpassword.pass-meter { border-bottom: 3px solid #F44336; box-shadow: none;}
 #passw.pass-meter.psms-25, #newpassword.pass-meter.psms-25 { border-bottom: 3px solid #F44336; box-shadow: none; }
@@ -489,6 +512,14 @@ h5 {
 	box-shadow:         0 3px 6px 0 rgba(0,0,0,.12),0 1px 7px 0 rgba(0,0,0,.12),0 3px 6px -1px rgba(0,0,0,.2);
 }
 
+.sidenav-overlay {
+	z-index: 995;
+}
+
+.navbar-fixed .sidenav li:not(.divider) {
+	height: 50px;
+}
+
 .btn, .btn-small, .btn-large, .btn-flat {
 	border-radius: 4px;
 }
@@ -538,6 +569,10 @@ small.badgebox, .custom-badge.small {
 
 #badge-preview-icon {
 	color: black;
+}
+
+.custom-badge a {
+	color: inherit;
 }
 
 .smallspacebox {

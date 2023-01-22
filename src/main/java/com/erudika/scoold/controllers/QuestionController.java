@@ -194,7 +194,7 @@ public class QuestionController {
 			} catch (IOException ex) { }
 			return "blank";
 		} else {
-			return "redirect:" + showPost.getPostLink(false, false);
+			return "redirect:" + showPost.getPostLinkForRedirect();
 		}
 	}
 
@@ -271,7 +271,7 @@ public class QuestionController {
 				pc.create(showPost);
 			}
 		}
-		return "redirect:" + showPost.getPostLink(false, false);
+		return "redirect:" + ((showPost == null) ? QUESTIONSLINK : showPost.getPostLinkForRedirect());
 	}
 
 	@PostMapping("/{id}/approve/{answerid}")
@@ -281,8 +281,7 @@ public class QuestionController {
 		if (!utils.canEdit(showPost, authUser) || showPost == null) {
 			return "redirect:" + req.getRequestURI();
 		}
-		if (utils.canEdit(showPost, authUser) && answerid != null &&
-				(utils.isMine(showPost, authUser) || utils.isMod(authUser))) {
+		if (answerid != null && utils.canApproveReply(showPost, authUser)) {
 			Reply answer = (Reply) pc.read(answerid);
 
 			if (answer != null && answer.isReply()) {
@@ -314,7 +313,7 @@ public class QuestionController {
 				}
 			}
 		}
-		return "redirect:" + showPost.getPostLink(false, false);
+		return "redirect:" + showPost.getPostLinkForRedirect();
 	}
 
 	@PostMapping("/{id}/close")
@@ -333,7 +332,7 @@ public class QuestionController {
 			}
 			showPost.update();
 		}
-		return "redirect:" + showPost.getPostLink(false, false);
+		return "redirect:" + showPost.getPostLinkForRedirect();
 	}
 
 	@PostMapping("/{id}/restore/{revisionid}")
@@ -347,7 +346,7 @@ public class QuestionController {
 			utils.addBadgeAndUpdate(authUser, Badge.BACKINTIME, true);
 			showPost.restoreRevisionAndUpdate(revisionid);
 		}
-		return "redirect:" + showPost.getPostLink(false, false);
+		return "redirect:" + showPost.getPostLinkForRedirect();
 	}
 
 	@PostMapping("/{id}/delete")
@@ -375,7 +374,7 @@ public class QuestionController {
 				model.addAttribute("deleted", true);
 			}
 		}
-		return "redirect:" + showPost.getPostLink(false, false);
+		return "redirect:" + showPost.getPostLinkForRedirect();
 	}
 
 	@PostMapping("/{id}/deprecate")
@@ -389,7 +388,7 @@ public class QuestionController {
 			showPost.setDeprecated(!showPost.getDeprecated());
 			showPost.update();
 		}
-		return "redirect:" + showPost.getPostLink(false, false);
+		return "redirect:" + showPost.getPostLinkForRedirect();
 	}
 
 	@PostMapping("/{id}/merge-into")
@@ -414,20 +413,19 @@ public class QuestionController {
 					targetPost.addFollower(u);
 				}
 			}
-			Pager pager = new Pager(1, "_docid", false, CONF.maxItemsPerPage());
-			List<Reply> answers;
-			do {
-				answers = pc.getChildren(showPost, Utils.type(Reply.class), pager);
+			pc.readEverything(pager -> {
+				List<Reply> answers = pc.getChildren(showPost, Utils.type(Reply.class), pager);
 				for (Reply answer : answers) {
 					answer.setParentid(targetPost.getId());
 					answer.setTitle(targetPost.getTitle());
 				}
 				pc.createAll(answers); // overwrite
-			} while (!answers.isEmpty());
+				return answers;
+			});
 			targetPost.update();
 			showPost.delete();
 		}
-		return "redirect:" + targetPost.getPostLink(false, false);
+		return "redirect:" + targetPost.getPostLinkForRedirect();
 	}
 
 	@GetMapping("/find/{q}")
@@ -446,10 +444,9 @@ public class QuestionController {
 		if (showPost == null || showPost.isReply()) {
 			return;
 		}
-		Pager pager = new Pager(1, "_docid", false, CONF.maxItemsPerPage());
-		List<Reply> answerslist;
-		try {
-			do {
+		pc.readEverything(pager -> {
+			List<Reply> answerslist = List.of();
+			try {
 				answerslist = pc.getChildren(showPost, Utils.type(Reply.class), pager);
 				for (Reply reply : answerslist) {
 					reply.setSpace(space);
@@ -458,14 +455,15 @@ public class QuestionController {
 					pc.updateAll(answerslist);
 					Thread.sleep(500);
 				}
-			} while (!answerslist.isEmpty());
-		} catch (InterruptedException ex) {
-			logger.error(null, ex);
-			Thread.currentThread().interrupt();
-		}
+			} catch (InterruptedException ex) {
+				logger.error(null, ex);
+				Thread.currentThread().interrupt();
+			}
+			return answerslist;
+		});
 	}
 
-	private List<Reply> getAllAnswers(Profile authUser, Post showPost, Pager itemcount) {
+	public List<Reply> getAllAnswers(Profile authUser, Post showPost, Pager itemcount) {
 		if (showPost == null || showPost.isReply()) {
 			return Collections.emptyList();
 		}

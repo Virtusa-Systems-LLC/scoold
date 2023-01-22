@@ -81,6 +81,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Scanner;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
@@ -124,6 +125,7 @@ public final class ScooldUtils {
 	private static final Map<String, Object> API_KEYS = new LinkedHashMap<>(); // jti => jwt
 
 	private List<Sysprop> allSpaces;
+	private Set<String> autoAssignedSpacesFromConfig;
 
 	private static final ScooldConfig CONF = new ScooldConfig();
 
@@ -185,6 +187,8 @@ public final class ScooldUtils {
 	private static ScooldUtils instance;
 	private Sysprop customTheme;
 	@Inject private Emailer emailer;
+
+	public static final int MAX_SPACES = 10; // Hey! It's cool to edit this, but please consider buying Scoold Pro! :)
 
 	@Inject
 	public ScooldUtils(ParaClient pc, LanguageUtils langutils, AvatarRepositoryProxy avatarRepository,
@@ -303,7 +307,7 @@ public final class ScooldUtils {
 	}
 
 	private boolean promoteOrDemoteUser(Profile authUser, User u) {
-		if (authUser != null) {
+		if (authUser != null && authUser.isEditorRoleEnabled()) {
 			if (!isAdmin(authUser) && isRecognizedAsAdmin(u)) {
 				logger.info("User '{}' with id={} promoted to admin.", u.getName(), authUser.getId());
 				authUser.setGroups(User.Groups.ADMINS.toString());
@@ -353,6 +357,9 @@ public final class ScooldUtils {
 			authUser.setOriginalName(u.getName());
 			update = true;
 		}
+		if (authUser.isComplete()) {
+			update = addBadgeOnce(authUser, Profile.Badge.NICEPROFILE, authUser.isComplete()) || update;
+		}
 		return update;
 	}
 
@@ -395,18 +402,19 @@ public final class ScooldUtils {
 		}
 	}
 
-	public void sendVerificationEmail(Sysprop identifier, HttpServletRequest req) {
+	public void sendVerificationEmail(Sysprop identifier, String redirectUrl, HttpServletRequest req) {
 		if (identifier != null) {
 			Map<String, Object> model = new HashMap<String, Object>();
 			Map<String, String> lang = getLang(req);
-			String subject = Utils.formatMessage(lang.get("signin.welcome"), CONF.appName());
+			String subject = CONF.appName() + " - " + lang.get("msgcode.6");
 			String body = getDefaultEmailSignature(CONF.emailsWelcomeText3(lang));
+			redirectUrl = StringUtils.isBlank(redirectUrl) ? SIGNINLINK + "/register" : redirectUrl;
 
 			String token = Utils.base64encURL(Utils.generateSecurityToken().getBytes());
 			identifier.addProperty(Config._EMAIL_TOKEN, token);
 			identifier.addProperty("confirmationTimestamp", Utils.timestamp());
 			pc.update(identifier);
-			token = CONF.serverUrl() + CONF.serverContextPath() + SIGNINLINK + "/register?id=" +
+			token = CONF.serverUrl() + CONF.serverContextPath() + redirectUrl + "?id=" +
 					identifier.getCreatorid() + "&token=" + token;
 			body = "<b><a href=\"" + token + "\">" + lang.get("signin.welcome.verify") + "</a></b><br><br>" + body;
 
@@ -559,11 +567,8 @@ public final class ScooldUtils {
 	private Set<String> getFavTagsSubscribers(List<String> tags) {
 		if (!tags.isEmpty()) {
 			Set<String> emails = new LinkedHashSet<>();
-			// find all user objects even if there are more than 10000 users in the system
-			Pager pager = new Pager(1, "_docid", false, CONF.maxItemsPerPage());
-			List<Profile> profiles;
-			do {
-				profiles = pc.findQuery(Utils.type(Profile.class),
+			pc.readEverything(pager -> {
+				List<Profile> profiles = pc.findQuery(Utils.type(Profile.class),
 						"properties.favtags:(" + tags.stream().
 								map(t -> "\"".concat(t).concat("\"")).distinct().
 								collect(Collectors.joining(" ")) + ") AND properties.favtagsEmailsEnabled:true", pager);
@@ -573,7 +578,8 @@ public final class ScooldUtils {
 
 					users.stream().forEach(u -> emails.add(u.getEmail()));
 				}
-			} while (!profiles.isEmpty());
+				return profiles;
+			});
 			return emails;
 		}
 		return Collections.emptySet();
@@ -825,6 +831,10 @@ public final class ScooldUtils {
 		return CONF.slackAuthEnabled();
 	}
 
+	public boolean isMicrosoftAuthEnabled() {
+		return CONF.teamsAuthEnabled();
+	}
+
 	public static boolean isGravatarEnabled() {
 		return CONF.gravatarsEnabled();
 	}
@@ -940,10 +950,11 @@ public final class ScooldUtils {
 	public Pager pagerFromParams(String pageParamName, HttpServletRequest req) {
 		Pager p = new Pager(CONF.maxItemsPerPage());
 		p.setPage(Math.min(NumberUtils.toLong(req.getParameter(pageParamName), 1), CONF.maxPages()));
-		p.setLimit(NumberUtils.toInt(req.getParameter("limit"), CONF.maxItemsPerPage()));
-		String lastKey = req.getParameter("lastKey");
-		String sort = req.getParameter("sortby");
-		String desc = req.getParameter("desc");
+		String paramSuffix = StringUtils.substringAfter(pageParamName, "page");
+		String lastKey = Optional.ofNullable(req.getParameter("lastKey")).orElse(req.getParameter("lastKey" + paramSuffix));
+		String sort = Optional.ofNullable(req.getParameter("sortby")).orElse(req.getParameter("sortby" + paramSuffix));
+		String desc = Optional.ofNullable(req.getParameter("desc")).orElse(req.getParameter("desc" + paramSuffix));
+		String limit = Optional.ofNullable(req.getParameter("limit")).orElse(req.getParameter("limit" + paramSuffix));
 		if (!StringUtils.isBlank(desc)) {
 			p.setDesc(Boolean.parseBoolean(desc));
 		}
@@ -952,6 +963,9 @@ public final class ScooldUtils {
 		}
 		if (!StringUtils.isBlank(sort)) {
 			p.setSortby(sort);
+		}
+		if (!StringUtils.isBlank(limit)) {
+			p.setLimit(NumberUtils.toInt(limit, CONF.maxItemsPerPage()));
 		}
 		return p;
 	}
@@ -1152,11 +1166,13 @@ public final class ScooldUtils {
 	}
 
 	public boolean isAdmin(Profile authUser) {
-		return authUser != null && User.Groups.ADMINS.toString().equals(authUser.getGroups());
+		return authUser != null &&
+				(User.Groups.ADMINS.toString().equals(authUser.getGroups()) && authUser.isEditorRoleEnabled());
 	}
 
 	public boolean isMod(Profile authUser) {
-		return authUser != null && (isAdmin(authUser) || User.Groups.MODS.toString().equals(authUser.getGroups()));
+		return authUser != null && (isAdmin(authUser) ||
+				(User.Groups.MODS.toString().equals(authUser.getGroups()) && authUser.isEditorRoleEnabled()));
 	}
 
 	public boolean isRecognizedAsAdmin(User u) {
@@ -1300,7 +1316,7 @@ public final class ScooldUtils {
 	}
 
 	public String getSpaceId(String space) {
-		if (StringUtils.isBlank(space)) {
+		if (StringUtils.isBlank(space) || "default".equalsIgnoreCase(space)) {
 			return DEFAULT_SPACE;
 		}
 		String s = StringUtils.contains(space, Para.getConfig().separator()) ?
@@ -1348,8 +1364,93 @@ public final class ScooldUtils {
 		String spaceId = getSpaceId(Utils.noSpaces(Utils.stripAndTrim(space, " "), "-"));
 		Sysprop s = new Sysprop(spaceId);
 		s.setType("scooldspace");
-		s.setName(space);
+		s.setName(isDefaultSpace(space) ? "default" : space);
 		return s;
+	}
+
+	public boolean isAutoAssignedSpace(Sysprop space) {
+		return space != null && (isAutoAssignedSpaceInConfig(space) ||
+				(space.getTags() != null && !space.getTags().isEmpty() &&
+				space.getTags().iterator().next().equals("assign-to-all")));
+	}
+
+	public boolean isAutoAssignedSpaceInConfig(Sysprop space) {
+		return space != null && (getAutoAssignedSpacesFromConfig().contains(space.getName()) ||
+				getAutoAssignedSpacesFromConfig().stream().map(s -> buildSpaceObject(s).getId()).
+						anyMatch(i -> i.equalsIgnoreCase(space.getId())));
+	}
+
+	public Set<String> getAutoAssignedSpacesFromConfig() {
+		if (autoAssignedSpacesFromConfig == null) {
+			autoAssignedSpacesFromConfig = Set.of(ScooldUtils.getConfig().autoAssignSpaces().split("\\s*,\\s*"));
+		}
+		return autoAssignedSpacesFromConfig;
+	}
+
+	public String[] getAllAutoAssignedSpaces() {
+		Set<String> allAutoAssignedSpaces = new LinkedHashSet<>();
+		allAutoAssignedSpaces.addAll(pc.findTagged("scooldspace", new String[]{"assign-to-all"},
+				new Pager(200)).stream().map(s -> s.getName()).collect(Collectors.toSet()));
+		allAutoAssignedSpaces.addAll(getAutoAssignedSpacesFromConfig());
+		return allAutoAssignedSpaces.toArray(String[]::new);
+	}
+
+	public boolean assignSpacesToUser(Profile authUser, String... spaces) {
+		if (spaces != null && spaces.length > 0) {
+			//DO: CHECK IF SPACES HAVE CHANGED FIRST! NO CHANGE - NO OP
+			Map<String, Sysprop> spaceObjectsMap = new HashMap<>(spaces.length);
+			for (String space : spaces) {
+				Sysprop s = buildSpaceObject(space);
+				spaceObjectsMap.put(s.getId(), s);
+			}
+			List<Sysprop> spacez = pc.readAll(new ArrayList<>(spaceObjectsMap.keySet()));
+			Set<String> assignedSpaces = new HashSet<>(spacez.size());
+			for (Sysprop space : spacez) {
+				assignedSpaces.add(space.getId() + Para.getConfig().separator() + space.getName());
+				spaceObjectsMap.remove(space.getId());
+			}
+			if (CONF.resetSpacesOnNewAssignment(authUser.getUser().isOAuth2User()
+					|| authUser.getUser().isLDAPUser() || authUser.getUser().isSAMLUser())) {
+				authUser.setSpaces(assignedSpaces);
+			} else {
+				authUser.getSpaces().addAll(assignedSpaces);
+			}
+			if (!spaceObjectsMap.isEmpty()) {
+				// create the remaining spaces which were missing
+				ArrayList<Sysprop> missingSpaces = new ArrayList<>(spaceObjectsMap.size());
+				for (Sysprop missingSpace : spaceObjectsMap.values()) {
+					authUser.getSpaces().add(missingSpace.getId() + Para.getConfig().separator() + missingSpace.getName());
+					missingSpaces.add(missingSpace);
+					getAllSpaces().add(missingSpace); // if we don't add it admins won't see the new space in the list
+				}
+				pc.createAll(missingSpaces);
+				return true;
+			}
+			// Please, consider buying Scoold Pro which doesn't have this limitation.
+			if (authUser.getSpaces().size() > MAX_SPACES) {
+				authUser.setSpaces(authUser.getSpaces().stream().limit(MAX_SPACES).collect(Collectors.toSet()));
+			}
+		}
+		return false;
+	}
+
+	public void assingSpaceToAllUsers(Sysprop space) {
+		if (space == null) {
+			return;
+		}
+		Para.asyncExecute(() -> {
+			pc.updateAllPartially((toUpdate, pager) -> {
+				List<Profile> profiles = pc.findQuery(Utils.type(Profile.class), "*", pager);
+				profiles.stream().forEach(p -> {
+					Map<String, Object> profile = new HashMap<>();
+					profile.put(Config._ID, p.getId());
+					p.getSpaces().add(space.getId() + Para.getConfig().separator() + space.getName());
+					profile.put("spaces", p.getSpaces());
+					toUpdate.add(profile);
+				});
+				return profiles;
+			});
+		});
 	}
 
 	public String sanitizeQueryString(String query, HttpServletRequest req) {
@@ -1465,6 +1566,18 @@ public final class ScooldUtils {
 		return isMine(showPost, authUser);
 	}
 
+	public boolean canApproveReply(Post showPost, Profile authUser) {
+		switch (CONF.answersApprovedBy()) {
+			case "admins":
+				return isAdmin(authUser);
+			case "moderators":
+			case "mods":
+				return isMod(authUser);
+			default:
+				return canEdit(showPost, authUser) && (isMine(showPost, authUser) || isMod(authUser));
+		}
+	}
+
 	@SuppressWarnings("unchecked")
 	public <P extends ParaObject> P populate(HttpServletRequest req, P pobj, String... paramName) {
 		if (pobj == null || paramName == null) {
@@ -1517,6 +1630,14 @@ public final class ScooldUtils {
 			}
 		}
 		return error;
+	}
+
+	public Map<String, String> validateQuestionTags(Question q, Map<String, String> errors, HttpServletRequest req) {
+		if (CONF.minTagsPerPost() > Optional.ofNullable(q.getTags()).orElse(List.of()).stream().
+				filter(t -> !StringUtils.isBlank(t)).distinct().count()) {
+			errors.put(Config._TAGS, Utils.formatMessage(getLang(req).get("tags.toofew"), CONF.minTagsPerPost()));
+		}
+		return errors;
 	}
 
 	public String getFullAvatarURL(Profile profile, AvatarFormat format) {
@@ -1890,6 +2011,10 @@ public final class ScooldUtils {
 		return loadResource("themes/default.css");
 	}
 
+	public String getLogoUrl(Profile authUser, HttpServletRequest req) {
+		return isDarkModeEnabled(authUser, req) ? CONF.logoDarkUrl() : CONF.logoUrl();
+	}
+
 	public String getSmallLogoUrl() {
 		String defaultLogo = CONF.serverUrl() + CONF.imagesLink() + "/logowhite.png";
 		String logoUrl = CONF.logoSmallUrl();
@@ -1901,6 +2026,33 @@ public final class ScooldUtils {
 			return mainLogoUrl;
 		}
 		return logoUrl;
+	}
+
+	public boolean isPasswordStrongEnough(String password) {
+		if (StringUtils.length(password) >= CONF.minPasswordLength()) {
+			int score = 0;
+			if (password.matches(".*[a-z].*")) {
+				score++;
+			}
+			if (password.matches(".*[A-Z].*")) {
+				score++;
+			}
+			if (password.matches(".*[0-9].*")) {
+				score++;
+			}
+			if (password.matches(".*[^\\w\\s\\n\\t].*")) {
+				score++;
+			}
+			// 1 = good strength, 2 = medium strength, 3 = high strength
+			if (CONF.minPasswordStrength() <= 1) {
+				return score >= 2;
+			} else if (CONF.minPasswordStrength() == 2) {
+				return score >= 3;
+			} else {
+				return score >= 4;
+			}
+		}
+		return false;
 	}
 
 	public String getCSPNonce() {
@@ -1957,22 +2109,22 @@ public final class ScooldUtils {
 	public String getOAuth2LoginURL() {
 		return CONF.oauthAuthorizationUrl("") + "?" +
 				"response_type=code&client_id=" + CONF.oauthAppId("") +
-				"&scope=" + CONF.oauthScope("") + "&state=" + getParaAppId() +
-				"&redirect_uri=" + getParaEndpoint() + "/oauth2_auth";
+				"&scope=" + CONF.oauthScope("") + getOauth2StateParam("") +
+				"&redirect_uri=" + getParaEndpoint() + "/oauth2_auth" + getOauth2AppidParam("");
 	}
 
 	public String getOAuth2SecondLoginURL() {
 		return CONF.oauthAuthorizationUrl("second") + "?" +
 				"response_type=code&client_id=" + CONF.oauthAppId("second") +
-				"&scope=" +  CONF.oauthScope("second") + "&state=" + getParaAppId() +
-				"&redirect_uri=" + getParaEndpoint() + "/oauth2_auth";
+				"&scope=" +  CONF.oauthScope("second") + getOauth2StateParam("second") +
+				"&redirect_uri=" + getParaEndpoint() + "/oauth2_auth" + getOauth2AppidParam("second");
 	}
 
 	public String getOAuth2ThirdLoginURL() {
 		return CONF.oauthAuthorizationUrl("third") + "?" +
 				"response_type=code&client_id=" + CONF.oauthAppId("third") +
-				"&scope=" +  CONF.oauthScope("third") + "&state=" + getParaAppId() +
-				"&redirect_uri=" + getParaEndpoint() + "/oauth2_auth";
+				"&scope=" +  CONF.oauthScope("third") + getOauth2StateParam("third") +
+				"&redirect_uri=" + getParaEndpoint() + "/oauth2_auth" + getOauth2AppidParam("third");
 	}
 
 	public String getParaEndpoint() {
@@ -1981,6 +2133,14 @@ public final class ScooldUtils {
 
 	public String getParaAppId() {
 		return StringUtils.removeStart(CONF.paraAccessKey(), "app:");
+	}
+
+	private String getOauth2StateParam(String a) {
+		return "&state=" + (CONF.oauthAppidInStateParamEnabled(a) ? getParaAppId() : UUID.randomUUID().toString());
+	}
+
+	private String getOauth2AppidParam(String a) {
+		return CONF.oauthAppidInStateParamEnabled(a) ? "" : "?appid=" + getParaAppId();
 	}
 
 	public String getFirstConfiguredLoginURL() {
@@ -1999,7 +2159,7 @@ public final class ScooldUtils {
 		if (!CONF.twitterAppId().isEmpty()) {
 			return getTwitterLoginURL();
 		}
-		if (!CONF.microsoftAppId().isEmpty()) {
+		if (isMicrosoftAuthEnabled()) {
 			return getMicrosoftLoginURL();
 		}
 		if (isSlackAuthEnabled()) {

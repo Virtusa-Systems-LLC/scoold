@@ -325,11 +325,7 @@ public abstract class Post extends Sysprop {
 	}
 
 	public static String getTagString(String tag) {
-		if (StringUtils.isBlank(tag)) {
-			return "";
-		}
-		String s = tag.replaceAll("[\\p{S}\\p{P}\\p{C}&&[^+\\.]]", " ").replaceAll("\\p{Z}+", " ").trim();
-		return StringUtils.truncate(Utils.noSpaces(s, "-"), 35);
+		return StringUtils.truncate(tag, 35);
 	}
 
 	public void updateTags(List<String> oldTags, List<String> newTags) {
@@ -495,11 +491,19 @@ public abstract class Post extends Sysprop {
 		return this instanceof Feedback;
 	}
 
+	public String getPostLinkForRedirect() {
+		return getPostLink(false, false, false);
+	}
+
 	public String getPostLink(boolean plural, boolean noid) {
+		return getPostLink(plural, noid, true);
+	}
+
+	public String getPostLink(boolean plural, boolean noid, boolean withContextPathPrefix) {
 		Post p = this;
 		String ptitle = Utils.noSpaces(Utils.stripAndTrim(p.getTitle()), "-");
 		String pid = (noid ? "" : "/" + p.getId() + "/" + ptitle);
-		String ctx = CONF.serverContextPath();
+		String ctx = withContextPathPrefix ? CONF.serverContextPath() : "";
 		if (p.isQuestion()) {
 			return ctx + (plural ? ScooldServer.QUESTIONSLINK : ScooldServer.QUESTIONLINK + pid);
 		} else if (p.isFeedback()) {

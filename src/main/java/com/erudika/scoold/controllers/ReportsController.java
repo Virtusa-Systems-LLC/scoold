@@ -18,9 +18,12 @@
 package com.erudika.scoold.controllers;
 
 import com.erudika.para.client.ParaClient;
+import com.erudika.para.core.Sysprop;
 import com.erudika.para.core.utils.Config;
 import com.erudika.para.core.utils.Pager;
+import com.erudika.para.core.utils.Para;
 import com.erudika.para.core.utils.ParaObjectUtils;
+import com.erudika.para.core.utils.RateLimiter;
 import com.erudika.para.core.utils.Utils;
 import com.erudika.scoold.ScooldConfig;
 import static com.erudika.scoold.ScooldServer.REPORTSLINK;
@@ -30,8 +33,10 @@ import static com.erudika.scoold.core.Profile.Badge.REPORTER;
 import com.erudika.scoold.core.Report;
 import com.erudika.scoold.utils.ScooldUtils;
 import java.io.IOException;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import javax.inject.Inject;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -53,6 +58,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 public class ReportsController {
 
 	private static final ScooldConfig CONF = ScooldUtils.getConfig();
+	private final RateLimiter reportsLimiter;
+	private final RateLimiter reportsLimiterAnon;
 
 	private final ScooldUtils utils;
 	private final ParaClient pc;
@@ -61,9 +68,11 @@ public class ReportsController {
 	public ReportsController(ScooldUtils utils) {
 		this.utils = utils;
 		this.pc = utils.getParaClient();
+		this.reportsLimiter = Para.createRateLimiter(3, 10, 20);
+		this.reportsLimiterAnon = Para.createRateLimiter(1, 3, 5);
 	}
 
-	@GetMapping
+	@GetMapping({"", "/delete-all"})
 	public String get(@RequestParam(required = false, defaultValue = Config._TIMESTAMP) String sortby,
 			HttpServletRequest req, Model model) {
 		if (utils.isAuthenticated(req) && !utils.isMod(utils.getAuthUser(req))) {
@@ -97,21 +106,29 @@ public class ReportsController {
 		Report rep = utils.populate(req, new Report(), "link", "description", "parentid", "subType", "authorName");
 		Map<String, String> error = utils.validate(rep);
 		if (error.isEmpty()) {
+			boolean canCreateReport;
 			if (utils.isAuthenticated(req)) {
 				Profile authUser = utils.getAuthUser(req);
 				rep.setAuthorName(authUser.getName());
 				rep.setCreatorid(authUser.getId());
-				utils.addBadgeAndUpdate(authUser, REPORTER, true);
+				canCreateReport = reportsLimiter.isAllowed(utils.getParaAppId(), authUser.getCreatorid());
+				utils.addBadgeAndUpdate(authUser, REPORTER, canCreateReport);
 			} else {
 				//allow anonymous reports
 				rep.setAuthorName(utils.getLang(req).get("anonymous"));
+				canCreateReport = reportsLimiterAnon.isAllowed(utils.getParaAppId(), req.getRemoteAddr());
 			}
 			if (StringUtils.startsWith(rep.getLink(), "/")) {
-				rep.setLink(CONF.serverUrl() + CONF.serverContextPath() + rep.getLink());
+				rep.setLink(CONF.serverUrl() + rep.getLink());
 			}
-			rep.create();
-			model.addAttribute("newreport", rep);
-			res.setStatus(200);
+			if (canCreateReport) {
+				rep.create();
+				model.addAttribute("newreport", rep);
+				res.setStatus(200);
+			} else {
+				model.addAttribute("error", "Too many requests.");
+				res.setStatus(400);
+			}
 		} else {
 			model.addAttribute("error", error);
 			res.setStatus(400);
@@ -177,5 +194,21 @@ public class ReportsController {
 			return "redirect:" + REPORTSLINK;
 		}
 		return "base";
+	}
+
+	@PostMapping("/delete-all")
+	public String deleteAll(HttpServletRequest req, HttpServletResponse res) {
+		if (utils.isAuthenticated(req)) {
+			Profile authUser = utils.getAuthUser(req);
+			if (utils.isAdmin(authUser)) {
+				pc.readEverything(pager -> {
+					pager.setSelect(Collections.singletonList(Config._ID));
+					List<Sysprop> reports = pc.findQuery(Utils.type(Report.class), "*", pager);
+					pc.deleteAll(reports.stream().map(r -> r.getId()).collect(Collectors.toList()));
+					return reports;
+				});
+			}
+		}
+		return "redirect:" + REPORTSLINK;
 	}
 }

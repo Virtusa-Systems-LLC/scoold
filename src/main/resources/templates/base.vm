@@ -43,11 +43,12 @@
 		<link rel="stylesheet" href="$!styleslink/api.css?r=$!rev">
 		#end
 		<link href="$!{stylesheetUrl}?r=$!rev" rel="stylesheet" media="screen">
+		#if($darkModeEnabled)
+		<link href="$!{darkStylesheetUrl}?r=$!rev" rel="stylesheet">
+		#end
 		#if($!langDirection == "RTL")
 		<link href="$!styleslink/rtl.css?r=$!rev" rel="stylesheet">
 		#end
-		#set($_confirmMsg = $!lang.get('areyousure'))
-		<script nonce="$cspNonce">CONFIRM_MSG = "$!_confirmMsg";</script>
 		#if ($includeGMapsScripts && $includeGMapsScripts == true)
 		<script nonce="$cspNonce" src="https://maps.googleapis.com/maps/api/js?libraries=places&key=$!GMAPS_API_KEY"></script>
 		#end
@@ -60,9 +61,6 @@
 		<style>
 			$!{_inlineCSS}
 		</style>
-		#end
-		#if($darkModeEnabled)
-		<link href="$!styleslink/dark.css?r=$!rev" rel="stylesheet">
 		#end
 	</head>
 	<body>
@@ -161,6 +159,22 @@
 								#end
 							#end
 
+							#macro(rolestoggle)
+								#if ($authUser.groups == "admins" || $authUser.groups == "mods")
+									<li>
+										<a href="$profilelink/toggle-editor-role" class="post-refresh" title="Toggle admin/moderator role">
+											#if($authUser.groups == "admins")
+												$!lang.get('admin.toggle1')
+											#elseif($authUser.groups == "mods")
+												$!lang.get('admin.toggle2')
+											#end:
+											#if($authUser.editorRoleEnabled)<span class="green-text">$!lang.get('on').toUpperCase()</span>
+											#else<span class="red-text">$!lang.get('off').toUpperCase()</span>#end</a>
+									</li>
+									<li class="divider"></li>
+								#end
+							#end
+
 							#if($authenticated)
 								#navbarspacesmenu(true)
 								<ul id="user-dropdown" class="dropdown-content">
@@ -171,6 +185,7 @@
 									<li><a href="$settingslink" title="$!lang.get('settings.title')">$!lang.get('settings.title')</a></li>
 									#customnavbarmenulinks()
 									<li class="divider"></li>
+									#rolestoggle()
 									<li><a href="$signoutlink" title="$!lang.get('signout')" class="post-refresh">$!lang.get('signout')</a></li>
 								</ul>
 							#end
@@ -271,6 +286,7 @@
 									#end
 
 									#navbarspacesmenu(false)
+									#rolestoggle()
 									<li><a href="$signoutlink" title="$!lang.get('signout')" class="post-refresh">$!lang.get('signout')</a></li>
 								#end
 							</ul>
@@ -367,9 +383,9 @@
 						</div>
 					</div>
 				</div>
-				<div class="footer-copyright">
+				#if($showBranding)
+				<div>
 					<div class="container">
-
 						<div class="row mbn">
 							<div class="col l6 s12 sTextCenter">
 								#set($_liclink = $utils.formatMessage("$!lang.get('license')",
@@ -377,16 +393,14 @@
 								<i class="fa fa-creative-commons"></i> $_liclink
 							</div>
 							<div class="col l6 s12 sTextCenter right-align">
-								#if($showBranding)
-									<span>This is a <a href="https://scoold.com"><b>Scoold</b></a> website powered by <a href="https://paraio.com">
-										<img src="$imageslink/paradark.svg" width="60" alt="Para logo" class="para-logo-footer"></a>
-									</span>
-								#end
+								<span>This website is powered by <a href="https://scoold.com"><b>Scoold</b></a> and <a href="https://paraio.com">
+									<img src="$imageslink/paradark.svg" width="60" alt="Para logo" class="para-logo-footer"></a>
+								</span>
 							</div>
 						</div>
-
 					</div>
 				</div>
+				#end
 			</footer>
 		</div>
 
@@ -423,9 +437,11 @@
 		#set($_welcomeMessageJS = "WELCOME_MESSAGE = '$_welcomeMsg'")
 		#set($_welcomeMsgOnLogin = $scooldUtils.getWelcomeMessageOnLogin($authUser))
 		#set($_welcomeMessageOnLoginJS = "WELCOME_MESSAGE_ONLOGIN = '$_welcomeMsgOnLogin'")
+		#set($_confirmMsg = $!lang.get('areyousure'))
+		#set($_confirmMsgJS = "CONFIRM_MSG = '$!_confirmMsg'")
 		<script nonce="$cspNonce">$ctxPathJS;$isRTLJS;$isAdminJS;$maxTagsJS;$minPassLen;
 			$avatarUploadsEnabledJS;$imgurJS;$cloudinaryJS;
-			$_welcomeMessageJS;$_welcomeMessageOnLoginJS;
+			$_welcomeMessageJS;$_welcomeMessageOnLoginJS;$_confirmMsgJS;
 			if ('serviceWorker' in navigator) {navigator.serviceWorker.register(CONTEXT_PATH + '/service-worker.js');}
 		</script>
 		<script nonce="$cspNonce" src="$!scriptslink/scoold.js?r=$!rev"></script>

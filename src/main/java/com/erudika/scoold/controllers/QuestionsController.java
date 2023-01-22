@@ -209,9 +209,9 @@ public class QuestionsController {
 			q.setCreatorid(authUser.getId());
 			q.setSpace(currentSpace);
 			if (StringUtils.isBlank(q.getTagsString())) {
-				q.setTags(Arrays.asList(CONF.defaultQuestionTag().isBlank() ? "question" : CONF.defaultQuestionTag()));
+				q.setTags(Arrays.asList(CONF.defaultQuestionTag().isBlank() ? "" : CONF.defaultQuestionTag()));
 			}
-			Map<String, String> error = utils.validate(q);
+			Map<String, String> error = utils.validateQuestionTags(q, utils.validate(q), req);
 			if (error.isEmpty()) {
 				q.setLocation(location);
 				q.setAuthor(authUser);
@@ -235,6 +235,7 @@ public class QuestionsController {
 				model.addAttribute("path", "questions.vm");
 				model.addAttribute("includeGMapsScripts", utils.isNearMeFeatureEnabled());
 				model.addAttribute("askSelected", "navbtn-hover");
+				res.setStatus(400);
 				return "base";
 			}
 			if (utils.isAjaxRequest(req)) {
@@ -245,7 +246,7 @@ public class QuestionsController {
 				} catch (IOException ex) { }
 				return "blank";
 			} else {
-				return "redirect:" + q.getPostLink(false, false);
+				return "redirect:" + q.getPostLinkForRedirect();
 			}
 		}
 		if (utils.isAjaxRequest(req)) {
@@ -270,15 +271,18 @@ public class QuestionsController {
 					authUser.update();
 				}
 			}
-			if (spaceObj != null) {
+			if (spaceObj != null && !utils.isDefaultSpace(spaceObj.getId())) {
 				space = spaceObj.getId().concat(Para.getConfig().separator()).concat(spaceObj.getName());
 			} else {
 				space = Post.DEFAULT_SPACE;
 			}
 		}
 		utils.storeSpaceIdInCookie(space, req, res);
-		String backTo = HttpUtils.getBackToUrl(req);
-		if (StringUtils.isBlank(backTo)) {
+		String backTo = HttpUtils.getBackToUrl(req, true);
+		if (!utils.isAuthenticated(req) && !(utils.isDefaultSpace(space) || utils.isAllSpaces(space))) {
+			return "redirect:" + SIGNINLINK + "?returnto=" + req.getServletPath();
+		}
+		if (StringUtils.isBlank(backTo) || backTo.equalsIgnoreCase(req.getServletPath())) {
 			return get(req.getParameter("sortby"), req, model);
 		} else {
 			return "redirect:" + backTo;
@@ -380,6 +384,15 @@ public class QuestionsController {
 			// should we specify the tags property here? like: tags:(tag1 OR tag2)
 			sb.append("tags").append(":(").append(tags.replaceAll(",", logicalOperator)).append(")");
 			query = sb.toString();
+		}
+		return getQueryWithPossibleExtension(query, req);
+	}
+
+	private String getQueryWithPossibleExtension(String query, HttpServletRequest req) {
+		String queryExt = req.getParameter("q");
+		queryExt = StringUtils.isBlank(queryExt) || queryExt.startsWith("*") ? "" : queryExt;
+		if (!queryExt.isBlank()) {
+			return query.equals("*") ? queryExt : query + " AND (" + queryExt + ")";
 		}
 		return query;
 	}

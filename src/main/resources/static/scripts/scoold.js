@@ -15,7 +15,7 @@
  *
  * For issues and patches go to: https://github.com/erudika
  */
-/*global window: false, jQuery: false, $: false, google, hljs, RTL_ENABLED, CONTEXT_PATH, M, CONFIRM_MSG, WELCOME_MESSAGE, WELCOME_MESSAGE_ONLOGIN, MAX_TAGS_PER_POST, MIN_PASS_LENGTH, AVATAR_UPLOADS_ENABLED, IMGUR_CLIENT_ID, IMGUR_ENABLED, CLOUDINARY_ENABLED: false */
+/*global window: false, jQuery: false, $: false, google, hljs, RTL_ENABLED, CONTEXT_PATH, M, CONFIRM_MSG, WELCOME_MESSAGE, WELCOME_MESSAGE_ONLOGIN, MAX_TAGS_PER_POST, MIN_PASS_LENGTH, AVATAR_UPLOADS_ENABLED, IMGUR_CLIENT_ID, IMGUR_ENABLED, CLOUDINARY_ENABLED, MAX_FAVORITE_TAGS: false */
 "use strict";
 $(function () {
 	var mapCanvas = $("div#map-canvas");
@@ -537,7 +537,9 @@ $(function () {
 
 	function changeAvatars(newPicValue) {
 		avatarUrlInput.val(newPicValue);
-		navbarAvatar.attr("src", newPicValue);
+		if (navbarAvatar.attr("src") === profileAvatar.attr("src")) {
+			navbarAvatar.attr("src", newPicValue);
+		}
 		profileAvatar.attr("src", newPicValue);
 	}
 
@@ -872,7 +874,7 @@ $(function () {
 
 	$(document).on('click', '.page-content .questionbox',  function () {
 		if (window.matchMedia("only screen and (max-width: 900px)").matches) {
-			$(this).find("a:first").get(0).click();
+			return $(this).find("a:first").get(0).click();
 		}
 	});
 
@@ -1021,7 +1023,8 @@ $(function () {
 				window.location.href = data.url || "";
 			}, function (xhr, status, error) {
 				clearInterval(saveDraftInterval1);
-				window.location.reload(true);
+				$(document).off("submit"); // turn off this handler and prevent infinite redirect loop
+				askForm.submit(); // retry normal POST submit (non-AJAX) to see validation errors
 			});
 		} catch (exception) {}
 	}
@@ -1177,6 +1180,15 @@ $(function () {
 		$.post(dis.closest("form").attr("action"), {emailme: dis.is(":checked")});
 	});
 
+	if ($("#follow-thread-check").is(":checked")) {
+		$(".follow-thread-bell").find("i").toggleClass("fa-bell-o fa-bell red-text");
+	}
+
+	$(".follow-thread-bell").click(function () {
+		$("#follow-thread-check").click();
+		$(this).find("i").toggleClass("fa-bell-o fa-bell red-text");
+	});
+
 	if (typeof hljs !== "undefined") {
 		$("pre code").each(function (i, block) {
 			hljs.highlightBlock(block);
@@ -1213,12 +1225,70 @@ $(function () {
 		return true;
 	});
 
+	var qfb = $("#user-filter-btn");
+	qfb.click(function () {
+		if (localStorage.getItem("userFilterOpen")) {
+			localStorage.removeItem("userFilterOpen");
+			$(this).removeClass("grey darken-2 white-text").blur().children("i").removeClass("fa-times").addClass("fa-filter");
+		} else {
+			var checked = $(".compact-view-checkbox").parent("label").attr("data-compactViewEnabled");
+			if (checked === "true") {
+				$(".compact-view-checkbox").prop("checked", true);
+			} else {
+				$(".compact-view-checkbox").prop("checked", false);
+			}
+			localStorage.setItem("userFilterOpen", true);
+			$(this).addClass("grey darken-2 white-text").children("i").removeClass("fa-filter").addClass("fa-times");
+		}
+	});
+
+	if (localStorage.getItem("userFilterOpen")) {
+		$("#user-filter-drawer").removeClass("hide");
+		qfb.addClass("grey darken-2 white-text").children("i").removeClass("fa-filter").addClass("fa-times");
+	}
+
+	$("#user-filter-clear-btn").click(function () {
+		qfb.click();
+		return true;
+	});
+
+	var manageBadgesBtn = $("#manage-badges-btn");
+	function toggleManageBadgesBtn() {
+		$("#badges-selector,#spaces-selector").toggleClass("hide");
+		var text = manageBadgesBtn.text();
+		manageBadgesBtn.text(manageBadgesBtn.attr("data-alttext")).attr("data-alttext", text);
+	}
+	manageBadgesBtn.click(function () {
+		if (localStorage.getItem("bulkEditBadges")) {
+			localStorage.removeItem("bulkEditBadges");
+			$("#badges-selector").find("select").val("").formSelect();
+		} else {
+			localStorage.setItem("bulkEditBadges", true);
+		}
+		toggleManageBadgesBtn();
+	});
+
+	if (localStorage.getItem("bulkEditBadges")) {
+		toggleManageBadgesBtn();
+	}
+
 	$(".bookmark-spaceurl").hover(function () {
 		$(this).find("a").toggleClass("hide").on("click", function (e) {
-			navigator.clipboard.writeText(window.location.href);
+			navigator.clipboard.writeText(this.href);
 			$(this).find("i").text("Copied!").attr("class", "green-text smallText").show().fadeOut(3000);
 			return false;
 		});
+	});
+
+	$(".permalink").on("click", function (e) {
+		navigator.clipboard.writeText(this.href);
+		var that = $(this).find("i");
+		var attr = that.attr("class");
+		that.text("Copied!").attr("class", "green-text smallText");
+		setTimeout(function () {
+			that.text("").attr("class", attr);
+		}, 2000);
+		return false;
 	});
 
 	$(".open-merge-window").click(function () {
@@ -1341,6 +1411,10 @@ $(function () {
 	}).map(function (t) {
 		return {tag: t};
 	});
+
+	if ("undefined" !== typeof MAX_FAVORITE_TAGS) {
+		MAX_TAGS_PER_POST = MAX_FAVORITE_TAGS; // allow more tags to be added on settings page!
+	}
 
 	// https://stackoverflow.com/a/38317768/108758
 	autocomplete.on({

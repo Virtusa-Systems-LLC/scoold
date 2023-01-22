@@ -207,6 +207,22 @@ public final class HttpUtils {
 		return null;
 	}
 
+	public static String getFullUrl(HttpServletRequest req) {
+		return getFullUrl(req, false);
+	}
+
+	public static String getFullUrl(HttpServletRequest req, boolean relative) {
+		String queryString = req.getQueryString();
+		String url = req.getRequestURL().toString();
+		if (queryString != null) {
+			url = req.getRequestURL().append('?').append(queryString).toString();
+		}
+		if (relative) {
+			url = "/" + URI.create(CONF.serverUrl()).relativize(URI.create(url)).toString();
+		}
+		return url;
+	}
+
 	/**
 	 * @param token CAPTCHA
 	 * @return boolean
@@ -266,22 +282,32 @@ public final class HttpUtils {
 	 * @return the original protected URL visited before authentication
 	 */
 	public static String getBackToUrl(HttpServletRequest req) {
-		String backtoFromCookie = Utils.urlDecode(HttpUtils.getStateParam("returnto", req));
-		if (StringUtils.isBlank(backtoFromCookie)) {
-			backtoFromCookie = req.getParameter("returnto");
-		}
-		String serverUrl = CONF.serverUrl() + "/";
+		return getBackToUrl(req, false);
+	}
+
+	/**
+	 * @param req req
+	 * @param relative relative
+	 * @return the original protected URL visited before authentication
+	 */
+	public static String getBackToUrl(HttpServletRequest req, boolean relative) {
+		String backto = Optional.ofNullable(StringUtils.stripToNull(req.getParameter("returnto"))).
+				orElse(Utils.urlDecode(HttpUtils.getStateParam("returnto", req)));
+		String serverUrl = CONF.serverUrl() + CONF.serverContextPath();
 		String resolved = "";
 		try {
-			resolved = URI.create(serverUrl).resolve(Optional.ofNullable(backtoFromCookie).orElse("")).toString();
+			resolved = URI.create(serverUrl).resolve(Optional.ofNullable(backto).orElse("")).toString();
 		} catch (Exception e) {
 			logger.warn("Invalid return-to URI: {}", e.getMessage());
 		}
 		if (!StringUtils.startsWithIgnoreCase(resolved, serverUrl)) {
-			backtoFromCookie = "";
+			backto = "";
 		} else {
-			backtoFromCookie = resolved;
+			backto = resolved;
 		}
-		return (StringUtils.isBlank(backtoFromCookie) ? HOMEPAGE : backtoFromCookie);
+		if (relative) {
+			backto = "/" + URI.create(CONF.serverUrl()).relativize(URI.create(backto)).toString();
+		}
+		return (StringUtils.isBlank(backto) ? HOMEPAGE : backto);
 	}
 }

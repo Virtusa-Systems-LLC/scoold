@@ -587,7 +587,6 @@ public class ScooldConfig extends Config {
 
 	@Documented(position = 530,
 			identifier = "csp_header",
-			value = "Dynamically generated, with nonces",
 			category = "Security",
 			description = "The CSP header value which will overwrite the default one. This can contain one or more "
 					+ "`{{nonce}}` placeholders, which will be replaced with an actual nonce on each request.")
@@ -689,7 +688,7 @@ public class ScooldConfig extends Config {
 			description = "Additional sources to add to the `style-src` CSP directive. "
 					+ "Used when adding external fonts to the site.")
 	public String cspStyleSources() {
-		return getConfigParam("csp_style_sources", serverUrl() + serverContextPath() + stylesheetUrl() + " " +
+		return getConfigParam("csp_style_sources", serverUrl() + stylesheetUrl() + " " +
 				externalStyles().replaceAll(",", ""));
 	}
 
@@ -930,6 +929,16 @@ public class ScooldConfig extends Config {
 		return getConfigParam("security.ldap.user_dn_pattern", "uid={0}");
 	}
 
+	@Documented(position = 901,
+			identifier = "security.ldap.ad_mode_enabled",
+			value = "false",
+			type = Boolean.class,
+			category = "LDAP Authentication",
+			description = "Enable/disable support for authenticating with Active Directory. If `true`, AD is enabled.")
+	public Boolean ldapActiveDirectoryEnabled() {
+		return getConfigBoolean("security.ldap.ad_mode_enabled", false);
+	}
+
 	@Documented(position = 910,
 			identifier = "security.ldap.active_directory_domain",
 			category = "LDAP Authentication",
@@ -1144,7 +1153,6 @@ public class ScooldConfig extends Config {
 	@Documented(position = 1130,
 			identifier = "security.saml.provider",
 			value = "Continue with SAML",
-			type = Boolean.class,
 			category = "SAML Authentication",
 			tags = {"Pro"},
 			description = "The text on the button for signing in with SAML.")
@@ -1249,9 +1257,20 @@ public class ScooldConfig extends Config {
 			type = Boolean.class,
 			category = "SAML Authentication",
 			tags = {"Pro"},
-			description = "Enable/disable SAML name id encryption.")
+			description = "Enable/disable SAML NameID encryption.")
 	public boolean samlNameidEncryptionEnabled() {
 		return getConfigBoolean("security.saml.security.want_nameid_encrypted", false);
+	}
+
+	@Documented(position = 1231,
+			identifier = "security.saml.security.want_nameid",
+			value = "true",
+			type = Boolean.class,
+			category = "SAML Authentication",
+			tags = {"Pro"},
+			description = "Enable/disable SAML NameID requirement.")
+	public boolean samlNameidEnabled() {
+		return getConfigBoolean("security.saml.security.want_nameid", true);
 	}
 
 	@Documented(position = 1240,
@@ -1534,6 +1553,17 @@ public class ScooldConfig extends Config {
 		return getConfigParam("security.oauth" + a + ".provider", "Continue with " + a + "OpenID Connect");
 	}
 
+	@Documented(position = 1501,
+			identifier = "security.oauth.appid_in_state_param_enabled",
+			value = "true",
+			type = Boolean.class,
+			category = "OAuth 2.0 Authentication",
+			description = "Enable/disable the use of the OAauth 2.0 state parameter to designate your Para app id. "
+					+ "Some OAauth 2.0 servers throw errors if the length of the state parameter is less than 8 chars.")
+	public boolean oauthAppidInStateParamEnabled(String a) {
+		return getConfigBoolean("security.oauth" + a + ".appid_in_state_param_enabled", true);
+	}
+
 	/* **************************************************************************************************************
 	 * Posts                                                                                                  Posts *
 	 ****************************************************************************************************************/
@@ -1556,6 +1586,17 @@ public class ScooldConfig extends Config {
 			description = "Enable/disable the need for approval of new posts by a moderator. ")
 	public boolean postsNeedApproval() {
 		return getConfigBoolean("posts_need_approval", false);
+	}
+
+	@Documented(position = 1521,
+			identifier = "answers_approved_by",
+			value = "default",
+			category = "Posts",
+			description = "Controls who is able to mark an answer as accepted/approved. "
+					+ "Possible values are `default` (author and moderators), `admins` (admins only), `moderators` "
+					+ "(moderators and admins).")
+	public String answersApprovedBy() {
+		return getConfigParam("answers_approved_by", "default");
 	}
 
 	@Documented(position = 1530,
@@ -1609,6 +1650,16 @@ public class ScooldConfig extends Config {
 			description = "The maximum number of tags a question can have. The minimum is 0 - then the default tag is used.")
 	public int maxTagsPerPost() {
 		return getConfigInt("max_tags_per_post", 5);
+	}
+
+	@Documented(position = 1571,
+			identifier = "min_tags_per_post",
+			value = "0",
+			type = Integer.class,
+			category = "Posts",
+			description = "The minimum number of tags a question must have. The minimum is 0.")
+	public int minTagsPerPost() {
+		return getConfigInt("min_tags_per_post", 0);
 	}
 
 	@Documented(position = 1580,
@@ -1696,7 +1747,6 @@ public class ScooldConfig extends Config {
 
 	@Documented(position = 1660,
 			identifier = "default_question_tag",
-			value = "question",
 			category = "Posts",
 			description = "The default question tag, used when no other tags are provided by its author.")
 	public String defaultQuestionTag() {
@@ -2003,6 +2053,16 @@ public class ScooldConfig extends Config {
 		return getConfigParam("s3_region", "");
 	}
 
+	@Documented(position = 1951,
+			identifier = "s3_endpoint",
+			category = "File Storage",
+			tags = {"Pro"},
+			description = "AWS S3 endpoint override. The S3 region will be ignored if this is set. "
+					+ "Can be used for connecting to S3-compatible storage providers.")
+	public String s3Endpoint() {
+		return getConfigParam("s3_endpoint", "");
+	}
+
 	@Documented(position = 1960,
 			identifier = "s3_access_key",
 			category = "File Storage",
@@ -2301,8 +2361,8 @@ public class ScooldConfig extends Config {
 			category = "Customization",
 			description = "The HTML code snippet to embed at the end of each transactional email message.")
 	public String emailsFooterHtml() {
-		return getConfigParam("emails_footer_html", "<a href=\"" + serverUrl() + "\">" + appName() + "</a> &bull; " +
-				"<a href=\"https://scoold.com\">Powered by Scoold</a>");
+		return getConfigParam("emails_footer_html", "<a href=\"" + serverUrl() + serverContextPath() + "\">" +
+				appName() + "</a> &bull; " + "<a href=\"https://scoold.com\">Powered by Scoold</a>");
 	}
 
 	@Documented(position = 2250,
@@ -2419,6 +2479,15 @@ public class ScooldConfig extends Config {
 		return getConfigParam("logo_url", imagesLink() + "/logo.svg");
 	}
 
+	@Documented(position = 2351,
+			identifier = "logo_dark_url",
+			value = "/images/logo.svg",
+			category = "Frontend Assets",
+			description = "The URL of the logo in the nav bar used in dark mode. Use a PNG, SVG, JPG or WebP format.")
+	public String logoDarkUrl() {
+		return getConfigParam("logo_dark_url", logoUrl());
+	}
+
 	@Documented(position = 2360,
 			identifier = "small_logo_url",
 			value = "/images/logowhite.png",
@@ -2444,6 +2513,16 @@ public class ScooldConfig extends Config {
 					+ " all existing CSS styles!*")
 	public String stylesheetUrl() {
 		return getConfigParam("stylesheet_url", stylesLink() + "/style.css");
+	}
+
+	@Documented(position = 2381,
+			identifier = "dark_stylesheet_url",
+			value = "/styles/dark.css",
+			category = "Frontend Assets",
+			description = "A stylesheet URL of a CSS file which will be used when dark mode is enabled. *This will overwrite"
+					+ " all existing dark CSS styles!*")
+	public String darkStylesheetUrl() {
+		return getConfigParam("dark_stylesheet_url", stylesLink() + "/dark.css");
 	}
 
 	@Documented(position = 2390,
@@ -2499,6 +2578,17 @@ public class ScooldConfig extends Config {
 	/* **************************************************************************************************************
 	 * Mattermost Integration                                                                Mattermost Integration *
 	 ****************************************************************************************************************/
+
+	@Documented(position = 2431,
+			identifier = "mattermost.auth_enabled",
+			value = "false",
+			type = Boolean.class,
+			category = "Mattermost Integration",
+			tags = {"Pro"},
+			description = "Enable/disable authentication with Mattermost.")
+	public boolean mattermostAuthEnabled() {
+		return getConfigBoolean("mattermost.auth_enabled", !mattermostAppId().isEmpty());
+	}
 
 	@Documented(position = 2440,
 			identifier = "mattermost.server_url",
@@ -2776,6 +2866,16 @@ public class ScooldConfig extends Config {
 	/* **************************************************************************************************************
 	 * Microsoft Teams Integration                                                      Microsoft Teams Integration *
 	 ****************************************************************************************************************/
+
+	@Documented(position = 2681,
+			identifier = "teams.auth_enabled",
+			value = "false",
+			type = Boolean.class,
+			category = "Microsoft Teams Integration",
+			description = "Enable/disable authentication with Microsoft.")
+	public boolean teamsAuthEnabled() {
+		return getConfigBoolean("teams.auth_enabled", !microsoftAppId().isEmpty());
+	}
 
 	@Documented(position = 2690,
 			identifier = "teams.bot_id",
@@ -3087,6 +3187,16 @@ public class ScooldConfig extends Config {
 		return getConfigInt("vote_locked_after_sec", Para.getConfig().voteLockedAfterSec());
 	}
 
+	@Documented(position = 2961,
+			identifier = "downvotes_enabled",
+			value = "true",
+			type = Boolean.class,
+			category = "Miscellaneous",
+			description = "Enable/disable negative votes.")
+	public boolean downvotesEnabled() {
+		return getConfigBoolean("downvotes_enabled", true);
+	}
+
 	@Documented(position = 2970,
 			identifier = "import_batch_size",
 			value = "100",
@@ -3184,6 +3294,17 @@ public class ScooldConfig extends Config {
 		return getConfigBoolean("user_autocomplete_details_enabled", false);
 	}
 
+	@Documented(position = 3070,
+			identifier = "user_autocomplete_max_results",
+			value = "10",
+			type = Integer.class,
+			category = "Miscellaneous",
+			tags = {"pro"},
+			description = "Controls the maximum number of search results in users' autocomplete.")
+	public int userAutocompleteMaxResults() {
+		return getConfigInt("user_autocomplete_max_results", 10);
+	}
+
 	/* **********************************************************************************************************/
 
 	public boolean inDevelopment() {
@@ -3258,44 +3379,13 @@ public class ScooldConfig extends Config {
 		settings.put("security.ldap.user_dn_pattern", ldapUserDNPattern());
 		settings.put("security.ldap.password_attribute", ldapPasswordAttributeName());
 		settings.put("security.ldap.username_as_name", ldapUsernameAsName());
+		settings.put("security.ldap.ad_mode_enabled", ldapActiveDirectoryEnabled());
 		settings.put("security.ldap.active_directory_domain", ldapActiveDirectoryDomain());
 		settings.put("security.ldap.mods_group_node", ldapModeratorsGroupNode());
 		settings.put("security.ldap.admins_group_node", ldapAdministratorsGroupNode());
 		if (!ldapComparePasswords().isEmpty()) {
 			settings.put("security.ldap.compare_passwords", ldapComparePasswords());
 		}
-		return settings;
-	}
-
-	public Map<String, Object> samlSettings() {
-		Map<String, Object> settings = new LinkedHashMap<>();
-		settings.put("security.saml.sp.entityid", samlSPEntityId());
-		settings.put("security.saml.sp.assertion_consumer_service.url", samlSPAssertionConsumerServiceUrl());
-		settings.put("security.saml.sp.nameidformat", samlSPNameIdFormat());
-		settings.put("security.saml.sp.x509cert", samlSPX509Certificate());
-		settings.put("security.saml.sp.privatekey", samlSPX509PrivateKey());
-
-		settings.put("security.saml.idp.entityid", samlIDPEntityId());
-		settings.put("security.saml.idp.single_sign_on_service.url", samlIDPSingleSignOnServiceUrl());
-		settings.put("security.saml.idp.x509cert", samlIDPX509Certificate());
-		settings.put("security.saml.idp.metadata_url", samlIDPMetadataUrl());
-
-		settings.put("security.saml.security.authnrequest_signed", samlAuthnRequestSigningEnabled());
-		settings.put("security.saml.security.want_messages_signed", samlMessageSigningEnabled());
-		settings.put("security.saml.security.want_assertions_signed", samlAssertionSigningEnabled());
-		settings.put("security.saml.security.want_assertions_encrypted", samlAssertionEncryptionEnabled());
-		settings.put("security.saml.security.want_nameid_encrypted", samlNameidEncryptionEnabled());
-		settings.put("security.saml.security.sign_metadata", samlMetadataSigningEnabled());
-		settings.put("security.saml.security.want_xml_validation", samlXMLValidationEnabled());
-		settings.put("security.saml.security.signature_algorithm", samlSignatureAlgorithm());
-
-		settings.put("security.saml.attributes.id", samlIdAttribute());
-		settings.put("security.saml.attributes.picture", samlPictureAttribute());
-		settings.put("security.saml.attributes.email", samlEmailAttribute());
-		settings.put("security.saml.attributes.name", samlNameAttribute());
-		settings.put("security.saml.attributes.firstname", samlFirstNameAttribute());
-		settings.put("security.saml.attributes.lastname", samlLastNameAttribute());
-		settings.put("security.saml.domain", samlDomain());
 		return settings;
 	}
 
@@ -3325,8 +3415,6 @@ public class ScooldConfig extends Config {
 		settings.putAll(oauthSettings("third"));
 		// LDAP settings
 		settings.putAll(ldapSettings());
-		// SAML settings
-		settings.putAll(samlSettings());
 		// secret key
 		settings.put("app_secret_key", appSecretKey());
 		// email verification
