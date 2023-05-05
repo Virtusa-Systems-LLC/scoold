@@ -124,7 +124,7 @@ public final class ScooldUtils {
 	private static final Map<String, String> WHITELISTED_MACROS;
 	private static final Map<String, Object> API_KEYS = new LinkedHashMap<>(); // jti => jwt
 
-	private List<Sysprop> allSpaces;
+	private Set<Sysprop> allSpaces;
 	private Set<String> autoAssignedSpacesFromConfig;
 
 	private static final ScooldConfig CONF = new ScooldConfig();
@@ -307,7 +307,7 @@ public final class ScooldUtils {
 	}
 
 	private boolean promoteOrDemoteUser(Profile authUser, User u) {
-		if (authUser != null && authUser.isEditorRoleEnabled()) {
+		if (authUser != null && authUser.getEditorRoleEnabled()) {
 			if (!isAdmin(authUser) && isRecognizedAsAdmin(u)) {
 				logger.info("User '{}' with id={} promoted to admin.", u.getName(), authUser.getId());
 				authUser.setGroups(User.Groups.ADMINS.toString());
@@ -1167,12 +1167,12 @@ public final class ScooldUtils {
 
 	public boolean isAdmin(Profile authUser) {
 		return authUser != null &&
-				(User.Groups.ADMINS.toString().equals(authUser.getGroups()) && authUser.isEditorRoleEnabled());
+				(User.Groups.ADMINS.toString().equals(authUser.getGroups()) && authUser.getEditorRoleEnabled());
 	}
 
 	public boolean isMod(Profile authUser) {
 		return authUser != null && (isAdmin(authUser) ||
-				(User.Groups.MODS.toString().equals(authUser.getGroups()) && authUser.isEditorRoleEnabled()));
+				(User.Groups.MODS.toString().equals(authUser.getGroups()) && authUser.getEditorRoleEnabled()));
 	}
 
 	public boolean isRecognizedAsAdmin(User u) {
@@ -1193,7 +1193,7 @@ public final class ScooldUtils {
 	}
 
 	public String getWelcomeMessage(Profile authUser) {
-		return authUser == null ? CONF.welcomeMessage() : "";
+		return authUser == null ? CONF.welcomeMessage().replaceAll("'", "&apos;") : "";
 	}
 
 	public String getWelcomeMessageOnLogin(Profile authUser) {
@@ -1205,11 +1205,15 @@ public final class ScooldUtils {
 			welcomeMsgOnlogin = Utils.compileMustache(Collections.singletonMap("user",
 					ParaObjectUtils.getAnnotatedFields(authUser, false)), welcomeMsgOnlogin);
 		}
-		return welcomeMsgOnlogin;
+		return welcomeMsgOnlogin.replaceAll("'", "&apos;");
 	}
 
 	public boolean isDefaultSpace(String space) {
 		return DEFAULT_SPACE.equalsIgnoreCase(getSpaceId(space));
+	}
+
+	public boolean isDefaultSpace(Sysprop space) {
+		return space != null && isDefaultSpace(space.getId());
 	}
 
 	public String getDefaultSpace() {
@@ -1220,9 +1224,9 @@ public final class ScooldUtils {
 		return ALL_MY_SPACES.equalsIgnoreCase(getSpaceId(space));
 	}
 
-	public List<Sysprop> getAllSpaces() {
+	public Set<Sysprop> getAllSpaces() {
 		if (allSpaces == null) {
-			allSpaces = new LinkedList<>(pc.findQuery("scooldspace", "*", new Pager(Config.DEFAULT_LIMIT)));
+			allSpaces = new LinkedHashSet<>(pc.findQuery("scooldspace", "*", new Pager(Config.DEFAULT_LIMIT)));
 		}
 		return allSpaces;
 	}
@@ -1267,7 +1271,7 @@ public final class ScooldUtils {
 		String spaceAttr = (String) req.getAttribute(CONF.spaceCookie());
 		String spaceValue = StringUtils.isBlank(spaceAttr) ? Utils.base64dec(getCookieValue(req, CONF.spaceCookie())) : spaceAttr;
 		String space = getValidSpaceId(authUser, spaceValue);
-		return (isAllSpaces(space) && isMod(authUser)) ? DEFAULT_SPACE : verifyExistingSpace(authUser, space);
+		return verifyExistingSpace(authUser, space);
 	}
 
 	public void storeSpaceIdInCookie(String space, HttpServletRequest req, HttpServletResponse res) {
@@ -1345,33 +1349,41 @@ public final class ScooldUtils {
 
 	public String getSpaceFilter(Profile authUser, String spaceId) {
 		if (isAllSpaces(spaceId)) {
-			if (authUser != null && authUser.hasSpaces()) {
+			if (isMod(authUser)) {
+				return "*";
+			} else if (authUser != null && authUser.hasSpaces()) {
 				return "(" + authUser.getSpaces().stream().map(s -> "properties.space:\"" + s + "\"").
 						collect(Collectors.joining(" OR ")) + ")";
 			} else {
 				return "properties.space:\"" + DEFAULT_SPACE + "\"";
 			}
-		} else if (isDefaultSpace(spaceId) && isMod(authUser)) { // DO NOT MODIFY!
-			return "*";
+//		} else if (isDefaultSpace(spaceId) && isMod(authUser)) { // DO NOT MODIFY!
+//			return "*";
 		} else {
 			return "properties.space:\"" + spaceId + "\"";
 		}
 	}
 
 	public Sysprop buildSpaceObject(String space) {
-		space = Utils.abbreviate(space, 255);
-		space = space.replaceAll(Para.getConfig().separator(), "");
-		String spaceId = getSpaceId(Utils.noSpaces(Utils.stripAndTrim(space, " "), "-"));
-		Sysprop s = new Sysprop(spaceId);
+		String spaceId, spaceName;
+		String col = Para.getConfig().separator();
+		if (space.startsWith(getSpaceId(space))) {
+			spaceId = StringUtils.substringBefore(StringUtils.substringAfter(space, col), col);
+			spaceName = StringUtils.substringAfterLast(space, col);
+		} else {
+			spaceId = space;
+			spaceName = Utils.abbreviate(space, 255).replaceAll(col, "");
+		}
+		Sysprop s = new Sysprop();
 		s.setType("scooldspace");
-		s.setName(isDefaultSpace(space) ? "default" : space);
+		s.setId(getSpaceId(Utils.noSpaces(Utils.stripAndTrim(spaceId, " "), "-")));
+		s.setName(isDefaultSpace(space) ? "default" : spaceName);
 		return s;
 	}
 
 	public boolean isAutoAssignedSpace(Sysprop space) {
 		return space != null && (isAutoAssignedSpaceInConfig(space) ||
-				(space.getTags() != null && !space.getTags().isEmpty() &&
-				space.getTags().iterator().next().equals("assign-to-all")));
+				Optional.ofNullable(space.getTags()).orElse(List.of()).contains("assign-to-all"));
 	}
 
 	public boolean isAutoAssignedSpaceInConfig(Sysprop space) {
@@ -1389,8 +1401,10 @@ public final class ScooldUtils {
 
 	public String[] getAllAutoAssignedSpaces() {
 		Set<String> allAutoAssignedSpaces = new LinkedHashSet<>();
-		allAutoAssignedSpaces.addAll(pc.findTagged("scooldspace", new String[]{"assign-to-all"},
-				new Pager(200)).stream().map(s -> s.getName()).collect(Collectors.toSet()));
+		allAutoAssignedSpaces.addAll(getAllSpaces().parallelStream().
+				filter(this::isAutoAssignedSpace).
+				filter(Predicate.not(this::isDefaultSpace)).
+				map(s -> s.getId() + Para.getConfig().separator() + s.getName()).collect(Collectors.toSet()));
 		allAutoAssignedSpaces.addAll(getAutoAssignedSpacesFromConfig());
 		return allAutoAssignedSpaces.toArray(String[]::new);
 	}

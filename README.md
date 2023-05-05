@@ -2,7 +2,9 @@
 
 ## Scoold - Stack Overflow in a JAR
 
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=com.erudika%3Ascoold&metric=alert_status)](https://sonarcloud.io/dashboard?id=com.erudika%3Ascoold)
+
+[![Docker pulls](https://img.shields.io/docker/pulls/erudikaltd/scoold)](https://hub.docker.com/r/erudikaltd/scoold)
+[![Docker pulls](https://img.shields.io/docker/image-size/erudikaltd/scoold)](https://hub.docker.com/r/erudikaltd/scoold)
 [![Join the chat at https://gitter.im/Erudika/scoold](https://badges.gitter.im/Erudika/scoold.svg)](https://gitter.im/Erudika/scoold?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 **Scoold** is a Q&A and a knowledge sharing platform for teams. The project was created back in 2008, released in 2012 as
@@ -147,6 +149,15 @@ Save the obtained API keys in the `application.conf` file that you have created 
 	java -jar -Dconfig.file=./scoold-application.conf \
 	  -Dscoold.autoinit.para_config_file=../para-application.conf scoold-*.jar`
 	```
+On startup, Scoold will try to initialize itself automatically using the root access key for Para. **Alternatively** you
+could provide Scoold with the root access key directly, instead of pointing it to the Para configuration file, like so:
+```
+	java -jar -Dconfig.file=./scoold-application.conf \
+	  -Dscoold.autoinit.root_app_secret_key="{secret key for root app}" scoold-*.jar`
+```
+The secret key for the root Para app can be found inside the Para configuration file, or `para-application.conf`,
+labeled `para.root_secret_key`.
+
 4. Open [localhost:8000/signin/register](http://localhost:8000/signin/register) and
 register a new account with same email you put in the configuration
 
@@ -402,6 +413,8 @@ scoold.password_auth_enabled = true
 |`scoold.delete_protection_enabled`<br>Enable/disable the ability for authors to delete their own question, when it already has answers and activity. | `true` | `Boolean`|
 |`scoold.max_text_length`<br>The maximum text length of each post (question or answer). Longer content will be truncated. | `20000` | `Integer`|
 |`scoold.max_tags_per_post`<br>The maximum number of tags a question can have. The minimum is 0 - then the default tag is used. | `5` | `Integer`|
+|`scoold.min_tags_per_post`<br>The minimum number of tags a question must have. The minimum is 0. | `0` | `Integer`|
+|`scoold.tag_creation_allowed`<br>Enable/disable tag creation by normal users. If disabled, only admins and moderators can create new tags. | `true` | `Boolean`|
 |`scoold.max_replies_per_post`<br>The maximum number of answers a question can have. | `500` | `Integer`|
 |`scoold.max_comments_per_id`<br>The maximum number of comments a post can have. | `1000` | `Integer`|
 |`scoold.max_comment_length`<br>The maximum length of each comment. | `600` | `Integer`|
@@ -687,20 +700,24 @@ If you purchase Scoold Pro you can get access to the private Docker registry hos
 Access to the private registry is not given automatically upon purchase - you have to request it. You will then be issued
 a special access key and secret for AWS ECR. Then execute the following BASH commands (these require
 [AWS CLI v2.x](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html)):
-1. Configure AWS CLI to use the new credentials:
+1. Configure AWS CLI to use the new credentials or instruct AWS CLI to use an existing credentials
+profile, e.g. `export AWS_PROFILE=docker`:
 	```
 	aws configure
 	```
-2. Authenticate Docker with ECR using the temporary access token:
+2. Authenticate with our ECR registry - a temporary access token will be issued for 12h:
 	```
 	aws ecr get-login-password --region eu-west-1 | \
 		docker login --username AWS --password-stdin 374874639893.dkr.ecr.eu-west-1.amazonaws.com
 	```
+If the command above doesn't succeed, you won't be able to pull the latest Scoold Pro image or run `docker compose`.
+
 3. Pull a Scoold Pro image with a specific tag:
 	```
 	aws ecr list-images --repository-name scoold-pro
 	docker pull 374874639893.dkr.ecr.eu-west-1.amazonaws.com/scoold-pro:{tag}
 	```
+You can also run `docker compose up` instead - [download `docker-compose.yml` for Scoold Pro here](https://raw.githubusercontent.com/Erudika/scoold-pro/master/docker-compose.yml)
 
 The `:latest` tag is not supported but you can use `:latest_stable`. The command `aws get-login-password`
 gives you an access token to the private Docker registry which is valid for **12 hours**.
@@ -841,12 +858,12 @@ to your container, containing the configuration. It should be mounted as `/scool
 
 ## Deploying Scoold to Google App Engine
 
-1. Clone this repo and change directory to it
-2. Create a project in the Google Cloud Platform Console
-3. Install the Google Cloud SDK
-4. Delete `Dockerfile` and `app.yml`
-4. Edit `app.gae.yaml` to suit your needs
-6. Deploy it with `gcloud preview app deploy app.gae.yaml`
+1. Download the Scoold JAR package to a local folder and rename it to `scoold.jar`
+2. Copy the file `app.gae.yaml` from this repository to the same folder and rename it to `app.yaml`
+3. Create a project in the Google Cloud Platform Console
+4. Install the Google Cloud SDK
+5. Edit `app.gae.yaml` and fill in the correct configuration properties
+6. Deploy it with `gcloud preview app deploy app.yaml`
 
 ## Deploying Scoold to a servlet container
 
@@ -2662,7 +2679,7 @@ where "xx" is the language code for your locale. Finally, open a pull request he
 **Icelandic** | [lang_is.properties](src/main/resources/lang_is.properties) | 0%
 **Indonesian** | [lang_in.properties](src/main/resources/lang_in.properties) | 0%
 **Irish** | [lang_ga.properties](src/main/resources/lang_ga.properties) | 0%
-**Italian** | [lang_it.properties](src/main/resources/lang_it.properties) | 0%
+**Italian** | [lang_it.properties](src/main/resources/lang_it.properties) | :heavy_check_mark: Thanks Marco Livrieri!
 **Japanese** | [lang_ja.properties](src/main/resources/lang_ja.properties) | :heavy_check_mark: Thanks Mozy Okubo!
 **Korean** | [lang_ko.properties](src/main/resources/lang_ko.properties) | :heavy_check_mark: Thanks HyunWoo Jo!
 **Lithuanian** | [lang_lt.properties](src/main/resources/lang_lt.properties) | 0%

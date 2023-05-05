@@ -82,6 +82,7 @@ public abstract class Post extends Sysprop {
 	@Stored private String space;
 	@Stored private Map<String, String> followers;
 	@Stored private Boolean deprecated;
+	@Stored private Long approvalTimestamp;
 
 	private transient Profile author;
 	private transient Profile lastEditor;
@@ -96,6 +97,14 @@ public abstract class Post extends Sysprop {
 
 	private ParaClient client() {
 		return ScooldUtils.getInstance().getParaClient();
+	}
+
+	public Long getApprovalTimestamp() {
+		return approvalTimestamp;
+	}
+
+	public void setApprovalTimestamp(Long approvalTimestamp) {
+		this.approvalTimestamp = approvalTimestamp;
 	}
 
 	public Boolean getDeprecated() {
@@ -339,10 +348,14 @@ public abstract class Post extends Sysprop {
 				stream()).distinct().collect(Collectors.toList())).
 				stream().collect(Collectors.toMap(t -> t.getId(), t -> (Tag) t));
 		// add newly created tags
-		client().createAll(newTagz.values().stream().filter(t -> {
-			t.setCount(1);
-			return !existingTagz.containsKey(t.getId());
-		}).collect(Collectors.toList()));
+		if (CONF.tagCreationAllowed() || ScooldUtils.getInstance().isMod(getAuthor())) {
+			client().createAll(newTagz.values().stream().filter(t -> {
+				t.setCount(1);
+				return !existingTagz.containsKey(t.getId());
+			}).collect(Collectors.toList()));
+		} else {
+			newTagz.clear();
+		}
 		// increment or decrement the count of the rest
 		existingTagz.values().forEach(t -> {
 			if (!oldTagz.containsKey(t.getId()) && newTagz.containsKey(t.getId())) {

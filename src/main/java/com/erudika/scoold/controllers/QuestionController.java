@@ -291,15 +291,18 @@ public class QuestionController {
 
 					if (answerid.equals(showPost.getAnswerid())) {
 						// Answer approved award - UNDO
-						showPost.setAnswerid("");
-						if (!samePerson) {
-							author.removeRep(CONF.answerApprovedRewardAuthor());
-							authUser.removeRep(CONF.answerApprovedRewardVoter());
-							pc.updateAll(Arrays.asList(author, authUser));
-						}
+						unApproveAnswer(authUser, author, showPost);
 					} else {
+						// fixes https://github.com/Erudika/scoold/issues/370
+						if (!StringUtils.isBlank(showPost.getAnswerid())) {
+							Reply prevAnswer = (Reply) pc.read(showPost.getAnswerid());
+							Profile prevAuthor = pc.read(Optional.ofNullable(prevAnswer).
+									orElse(new Reply()).getCreatorid());
+							unApproveAnswer(authUser, prevAuthor, showPost);
+						}
 						// Answer approved award - GIVE
 						showPost.setAnswerid(answerid);
+						showPost.setApprovalTimestamp(Utils.timestamp());
 						if (!samePerson) {
 							author.addRep(CONF.answerApprovedRewardAuthor());
 							authUser.addRep(CONF.answerApprovedRewardVoter());
@@ -556,5 +559,17 @@ public class QuestionController {
 
 	private String getPostLink(Post showPost) {
 		return showPost.getPostLink(false, false) + (showPost.isQuestion() ? "" :  "#post-" + showPost.getId());
+	}
+
+	private void unApproveAnswer(Profile authUser, Profile author, Post showPost) {
+		if (showPost != null) {
+			showPost.setAnswerid("");
+			showPost.setApprovalTimestamp(0L);
+		}
+		if (author != null && !author.equals(authUser)) {
+			author.removeRep(CONF.answerApprovedRewardAuthor());
+			authUser.removeRep(CONF.answerApprovedRewardVoter());
+			pc.updateAll(Arrays.asList(author, authUser));
+		}
 	}
 }
