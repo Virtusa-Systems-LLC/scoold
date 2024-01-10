@@ -18,6 +18,7 @@
 package com.erudika.scoold.controllers;
 
 import com.erudika.para.client.ParaClient;
+import com.erudika.para.core.ParaObject;
 import com.erudika.para.core.Sysprop;
 import com.erudika.para.core.utils.Config;
 import com.erudika.para.core.utils.Pager;
@@ -26,14 +27,18 @@ import com.erudika.para.core.utils.ParaObjectUtils;
 import com.erudika.para.core.utils.RateLimiter;
 import com.erudika.para.core.utils.Utils;
 import com.erudika.scoold.ScooldConfig;
+import static com.erudika.scoold.ScooldServer.HOMEPAGE;
 import static com.erudika.scoold.ScooldServer.REPORTSLINK;
 import static com.erudika.scoold.ScooldServer.SIGNINLINK;
 import com.erudika.scoold.core.Profile;
 import static com.erudika.scoold.core.Profile.Badge.REPORTER;
 import com.erudika.scoold.core.Report;
+import com.erudika.scoold.core.UnapprovedQuestion;
+import com.erudika.scoold.core.UnapprovedReply;
 import com.erudika.scoold.utils.ScooldUtils;
 import java.io.IOException;
 import java.util.Collections;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -65,6 +70,9 @@ public class ReportsController {
 	private final ParaClient pc;
 
 	@Inject
+	private QuestionController questionController;
+
+	@Inject
 	public ReportsController(ScooldUtils utils) {
 		this.utils = utils;
 		this.pc = utils.getParaClient();
@@ -76,7 +84,7 @@ public class ReportsController {
 	public String get(@RequestParam(required = false, defaultValue = Config._TIMESTAMP) String sortby,
 			HttpServletRequest req, Model model) {
 		if (utils.isAuthenticated(req) && !utils.isMod(utils.getAuthUser(req))) {
-			return "redirect:" + REPORTSLINK;
+			return "redirect:" + HOMEPAGE;
 		} else if (!utils.isAuthenticated(req)) {
 			return "redirect:" + SIGNINLINK + "?returnto=" + REPORTSLINK;
 		}
@@ -88,6 +96,9 @@ public class ReportsController {
 		model.addAttribute("reportsSelected", "navbtn-hover");
 		model.addAttribute("itemcount", itemcount);
 		model.addAttribute("reportslist", reportslist);
+		Pager count = new Pager(1);
+		pc.findQuery("", "type:(" + Utils.type(UnapprovedQuestion.class) + " OR " + Utils.type(UnapprovedReply.class) + ")", count);
+		model.addAttribute("unapprovedCount", count.getCount());
 		return "base";
 	}
 
@@ -181,6 +192,37 @@ public class ReportsController {
 		return "base";
 	}
 
+	@PostMapping("/{id}/open")
+	public String open(@PathVariable String id, HttpServletRequest req, HttpServletResponse res) {
+		if (utils.isAuthenticated(req)) {
+			Profile authUser = utils.getAuthUser(req);
+			Report report = pc.read(id);
+			if (report != null && utils.isMod(authUser)) {
+				report.setClosed(false);
+				report.update();
+			}
+		}
+		if (!utils.isAjaxRequest(req)) {
+			return "redirect:" + REPORTSLINK;
+		}
+		return "base";
+	}
+
+	@PostMapping("/{id}/approve")
+	public String approveItem(@PathVariable String id, HttpServletRequest req, HttpServletResponse res) {
+		Report report = pc.read(id);
+		if (report != null) {
+			questionController.modApprove(report.getParentid(), req);
+			report.setClosed(true);
+			report.setDescription(report.getDescription() + " ");
+			report.update();
+		}
+		if (!utils.isAjaxRequest(req)) {
+			return "redirect:" + REPORTSLINK;
+		}
+		return "base";
+	}
+
 	@PostMapping("/{id}/delete")
 	public String delete(@PathVariable String id, HttpServletRequest req, HttpServletResponse res) {
 		if (utils.isAuthenticated(req)) {
@@ -207,6 +249,25 @@ public class ReportsController {
 					pc.deleteAll(reports.stream().map(r -> r.getId()).collect(Collectors.toList()));
 					return reports;
 				});
+			}
+		}
+		return "redirect:" + REPORTSLINK;
+	}
+
+	@PostMapping("/cleanup-unapproved")
+	public String cleanupUnapproved(HttpServletRequest req, HttpServletResponse res) {
+		if (utils.isAuthenticated(req)) {
+			Profile authUser = utils.getAuthUser(req);
+			if (utils.isAdmin(authUser)) {
+				List<String> toDelete = new LinkedList<>();
+				pc.readEverything(pager -> {
+					pager.setSelect(Collections.singletonList(Config._ID));
+					List<ParaObject> objects = pc.findQuery("", Config._TYPE + ":" + Utils.type(UnapprovedQuestion.class) +
+							" OR " + Config._TYPE + ":" + Utils.type(UnapprovedReply.class), pager);
+					toDelete.addAll(objects.stream().map(r -> r.getId()).collect(Collectors.toList()));
+					return objects;
+				});
+				pc.deleteAll(toDelete);
 			}
 		}
 		return "redirect:" + REPORTSLINK;

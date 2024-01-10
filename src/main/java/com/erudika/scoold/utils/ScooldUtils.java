@@ -65,6 +65,7 @@ import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -156,11 +157,14 @@ public final class ScooldUtils {
 		HOOK_EVENTS = new HashSet<>(Arrays.asList(
 				"question.create",
 				"question.close",
+				"question.view",
 				"answer.create",
 				"answer.accept",
 				"report.create",
 				"comment.create",
+				"user.signin",
 				"user.signup",
+				"user.search",
 				"revision.restore"));
 
 		WHITELISTED_MACROS = new HashMap<String, String>();
@@ -181,6 +185,7 @@ public final class ScooldUtils {
 	}
 
 	private final ParaClient pc;
+	private final ParaClient pcThrows;
 	private final LanguageUtils langutils;
 	private final AvatarRepository avatarRepository;
 	private final GravatarAvatarGenerator gravatarAvatarGenerator;
@@ -197,7 +202,10 @@ public final class ScooldUtils {
 		this.langutils = langutils;
 		this.avatarRepository = avatarRepository;
 		this.gravatarAvatarGenerator = gravatarAvatarGenerator;
+		this.pcThrows = new ParaClient(CONF.paraAccessKey(), CONF.paraSecretKey());
 		API_USER.setPicture(avatarRepository.getAnonymizedLink(CONF.supportEmail()));
+		setParaEndpointAndApiPath(pcThrows);
+		pcThrows.throwExceptionOnHTTPError(true);
 	}
 
 	public ParaClient getParaClient() {
@@ -230,6 +238,21 @@ public final class ScooldUtils {
 		String admin = StringUtils.substringBefore(CONF.admins(), ",");
 		if (!StringUtils.isBlank(admin)) {
 			ADMINS.add(admin);
+		}
+	}
+
+	public static void setParaEndpointAndApiPath(ParaClient pc) {
+		try {
+			URL endpoint = new URL(CONF.paraEndpoint());
+			if (!StringUtils.isBlank(endpoint.getPath()) && !"/".equals(endpoint.getPath())) {
+				// support Para deployed under a specific context path
+				pc.setEndpoint(StringUtils.removeEnd(CONF.paraEndpoint(), endpoint.getPath()));
+				pc.setApiPath(StringUtils.stripEnd(endpoint.getPath(), "/") + pc.getApiPath());
+			} else {
+				pc.setEndpoint(CONF.paraEndpoint());
+			}
+		} catch (Exception e) {
+			logger.error("Invalid Para endpoint URL: {}", CONF.paraEndpoint());
 		}
 	}
 
@@ -276,6 +299,7 @@ public final class ScooldUtils {
 				authUser = getOrCreateProfile(u, req);
 				authUser.setUser(u);
 				authUser.setOriginalPicture(u.getPicture());
+				authUser.setCurrentSpace(getSpaceIdFromCookie(authUser, req));
 				boolean updatedRank = promoteOrDemoteUser(authUser, u);
 				boolean updatedProfile = updateProfilePictureAndName(authUser, u);
 				if (updatedRank || updatedProfile) {
@@ -325,7 +349,16 @@ public final class ScooldUtils {
 	}
 
 	private Profile getOrCreateProfile(User u, HttpServletRequest req) {
-		Profile authUser = pc.read(Profile.id(u.getId()));
+		Profile authUser;
+		try {
+			authUser = pcThrows.read(Profile.id(u.getId())); // what if this request fails (server down, OS frozen, etc)?
+		} catch (Exception e) {
+			logger.error(e.getMessage(), e);
+			authUser = pcThrows.read(Profile.id(u.getId())); // try again
+			if (authUser != null) {
+				return authUser;
+			}
+		}
 		if (authUser == null) {
 			authUser = Profile.fromUser(u);
 			authUser.create();
@@ -529,6 +562,32 @@ public final class ScooldUtils {
 		}
 	}
 
+	public Object isSubscribedToNewReplies(HttpServletRequest req) {
+		if (!isReplyNotificationAllowed()) {
+			return false;
+		}
+		Profile authUser = getAuthUser(req);
+		if (authUser != null) {
+			User u = authUser.getUser();
+			if (u != null) {
+				return getNotificationSubscribers(EMAIL_ALERTS_PREFIX + "new_reply_subscribers").contains(u.getEmail());
+			}
+		}
+		return false;
+	}
+
+	public void subscribeToNewReplies(User u) {
+		if (u != null) {
+			subscribeToNotifications(u.getEmail(), EMAIL_ALERTS_PREFIX + "new_reply_subscribers");
+		}
+	}
+
+	public void unsubscribeFromNewReplies(User u) {
+		if (u != null) {
+			unsubscribeFromNotifications(u.getEmail(), EMAIL_ALERTS_PREFIX + "new_reply_subscribers");
+		}
+	}
+
 	private Map<String, Profile> buildProfilesMap(List<User> users) {
 		if (users != null && !users.isEmpty()) {
 			Map<String, User> userz = users.stream().collect(Collectors.toMap(u -> u.getId(), u -> u));
@@ -565,7 +624,7 @@ public final class ScooldUtils {
 	}
 
 	private Set<String> getFavTagsSubscribers(List<String> tags) {
-		if (!tags.isEmpty()) {
+		if (tags != null && tags.stream().filter(t -> !StringUtils.isBlank(t)).count() > 0) {
 			Set<String> emails = new LinkedHashSet<>();
 			pc.readEverything(pager -> {
 				List<Profile> profiles = pc.findQuery(Utils.type(Profile.class),
@@ -619,40 +678,44 @@ public final class ScooldUtils {
 
 	@SuppressWarnings("unchecked")
 	public void sendNewPostNotifications(Post question, HttpServletRequest req) {
-		if (question == null) {
+		if (question == null || req.getParameter("notificationsDisabled") != null) {
 			return;
 		}
 		// the current user - same as utils.getAuthUser(req)
 		Profile postAuthor = question.getAuthor() != null ? question.getAuthor() : pc.read(question.getCreatorid());
-		if (!question.getType().equals(Utils.type(UnapprovedQuestion.class))) {
-			if (!isNewPostNotificationAllowed()) {
-				return;
-			}
+		if (!isNewPostNotificationAllowed()) {
+			return;
+		}
+		boolean awaitingApproval = postsNeedApproval(req) && question instanceof UnapprovedQuestion;
+		Map<String, Object> model = new HashMap<String, Object>();
+		Map<String, String> lang = getLang(req);
+		String name = postAuthor.getName();
+		String body = Utils.markdownToHtml(question.getBody());
+		String picture = Utils.formatMessage("<img src='{0}' width='25'>", escapeHtmlAttribute(avatarRepository.
+				getLink(postAuthor, AvatarFormat.Square25)));
+		String postURL = CONF.serverUrl() + question.getPostLink(false, false);
+		String tagsString = Optional.ofNullable(question.getTags()).orElse(Collections.emptyList()).stream().
+				map(t -> "<span class=\"tag\">" + escapeHtml(t) + "</span>").
+				collect(Collectors.joining("&nbsp;"));
+		String subject = Utils.formatMessage(lang.get("notification.newposts.subject"), name,
+				Utils.abbreviate(question.getTitle(), 255));
+		model.put("subject", escapeHtml((awaitingApproval ? "[" + lang.get("reports.awaitingapproval") + "] " : "") + subject));
+		model.put("logourl", getSmallLogoUrl());
+		model.put("heading", Utils.formatMessage(lang.get("notification.newposts.heading"), picture, escapeHtml(name)));
+		model.put("body", Utils.formatMessage("<h2><a href='{0}'>{1}</a></h2><div>{2}</div><br>{3}",
+				postURL, escapeHtml(question.getTitle()), body, tagsString));
 
-			Map<String, Object> model = new HashMap<String, Object>();
-			Map<String, String> lang = getLang(req);
-			String name = postAuthor.getName();
-			String body = Utils.markdownToHtml(question.getBody());
-			String picture = Utils.formatMessage("<img src='{0}' width='25'>", escapeHtmlAttribute(avatarRepository.
-					getLink(postAuthor, AvatarFormat.Square25)));
-			String postURL = CONF.serverUrl() + question.getPostLink(false, false);
-			String tagsString = Optional.ofNullable(question.getTags()).orElse(Collections.emptyList()).stream().
-					map(t -> "<span class=\"tag\">" + escapeHtml(t) + "</span>").
-					collect(Collectors.joining("&nbsp;"));
-			String subject = Utils.formatMessage(lang.get("notification.newposts.subject"), name,
-					Utils.abbreviate(question.getTitle(), 255));
-			model.put("subject", escapeHtml(subject));
-			model.put("logourl", getSmallLogoUrl());
-			model.put("heading", Utils.formatMessage(lang.get("notification.newposts.heading"), picture, escapeHtml(name)));
-			model.put("body", Utils.formatMessage("<h2><a href='{0}'>{1}</a></h2><div>{2}</div><br>{3}",
-					postURL, escapeHtml(question.getTitle()), body, tagsString));
+		Set<String> emails = new HashSet<String>(getNotificationSubscribers(EMAIL_ALERTS_PREFIX + "new_post_subscribers"));
+		emails.addAll(getFavTagsSubscribers(question.getTags()));
+		sendEmailsToSubscribersInSpace(emails, question.getSpace(), subject, compileEmailTemplate(model));
+		createReportCopyOfNotificiation(name, postURL, subject, body, awaitingApproval);
 
-			Set<String> emails = new HashSet<String>(getNotificationSubscribers(EMAIL_ALERTS_PREFIX + "new_post_subscribers"));
-			emails.addAll(getFavTagsSubscribers(question.getTags()));
-			sendEmailsToSubscribersInSpace(emails, question.getSpace(), subject, compileEmailTemplate(model));
-		} else if (postsNeedApproval() && question instanceof UnapprovedQuestion) {
+		if (awaitingApproval) {
 			Report rep = new Report();
-			rep.setDescription("New question awaiting approval");
+			rep.setName(question.getTitle());
+			rep.setContent(Utils.abbreviate(Utils.markdownToHtml(question.getBody()), 2000));
+			rep.setParentid(question.getId());
+			rep.setDescription(lang.get("reports.awaitingapproval"));
 			rep.setSubType(Report.ReportType.OTHER);
 			rep.setLink(question.getPostLink(false, false));
 			rep.setAuthorName(postAuthor.getName());
@@ -662,23 +725,27 @@ public final class ScooldUtils {
 
 	public void sendReplyNotifications(Post parentPost, Post reply, HttpServletRequest req) {
 		// send email notification to author of post except when the reply is by the same person
-		if (parentPost != null && reply != null && !StringUtils.equals(parentPost.getCreatorid(), reply.getCreatorid())) {
-			Profile replyAuthor = reply.getAuthor(); // the current user - same as utils.getAuthUser(req)
-			Map<String, Object> model = new HashMap<String, Object>();
-			Map<String, String> lang = getLang(req);
-			String name = replyAuthor.getName();
-			String body = Utils.markdownToHtml(reply.getBody());
-			String picture = Utils.formatMessage("<img src='{0}' width='25'>", escapeHtmlAttribute(avatarRepository.
-					getLink(replyAuthor, AvatarFormat.Square25)));
-			String postURL = CONF.serverUrl() + parentPost.getPostLink(false, false);
-			String subject = Utils.formatMessage(lang.get("notification.reply.subject"), name,
-					Utils.abbreviate(reply.getTitle(), 255));
-			model.put("subject", escapeHtml(subject));
-			model.put("logourl", getSmallLogoUrl());
-			model.put("heading", Utils.formatMessage(lang.get("notification.reply.heading"),
-					Utils.formatMessage("<a href='{0}'>{1}</a>", postURL, escapeHtml(parentPost.getTitle()))));
-			model.put("body", Utils.formatMessage("<h2>{0} {1}:</h2><div>{2}</div>", picture, escapeHtml(name), body));
+		if (parentPost == null || reply == null) {
+			return;
+		}
+		Map<String, String> lang = getLang(req);
+		Profile replyAuthor = reply.getAuthor(); // the current user - same as utils.getAuthUser(req)
+		boolean awaitingApproval = postsNeedApproval(req) && reply instanceof UnapprovedReply;
+		Map<String, Object> model = new HashMap<String, Object>();
+		String name = replyAuthor.getName();
+		String body = Utils.markdownToHtml(reply.getBody());
+		String picture = Utils.formatMessage("<img src='{0}' width='25'>", escapeHtmlAttribute(avatarRepository.
+				getLink(replyAuthor, AvatarFormat.Square25)));
+		String postURL = CONF.serverUrl() + parentPost.getPostLink(false, false);
+		String subject = Utils.formatMessage(lang.get("notification.reply.subject"), name,
+				Utils.abbreviate(reply.getTitle(), 255));
+		model.put("subject", escapeHtml((awaitingApproval ? "[" + lang.get("reports.awaitingapproval") + "] " : "") + subject));
+		model.put("logourl", getSmallLogoUrl());
+		model.put("heading", Utils.formatMessage(lang.get("notification.reply.heading"),
+				Utils.formatMessage("<a href='{0}'>{1}</a>", postURL, escapeHtml(parentPost.getTitle()))));
+		model.put("body", Utils.formatMessage("<h2>{0} {1}:</h2><div>{2}</div>", picture, escapeHtml(name), body));
 
+		if (!StringUtils.equals(parentPost.getCreatorid(), reply.getCreatorid())) {
 			Profile authorProfile = pc.read(parentPost.getCreatorid());
 			if (authorProfile != null) {
 				User author = authorProfile.getUser();
@@ -689,20 +756,30 @@ public final class ScooldUtils {
 				}
 			}
 
-			if (postsNeedApproval() && reply instanceof UnapprovedReply) {
-				Report rep = new Report();
-				rep.setDescription("New reply awaiting approval");
-				rep.setSubType(Report.ReportType.OTHER);
-				rep.setLink(parentPost.getPostLink(false, false) + "#post-" + reply.getId());
-				rep.setAuthorName(reply.getAuthor().getName());
-				rep.create();
+			if (isReplyNotificationAllowed()) {
+				if (parentPost.hasFollowers()) {
+					emailer.sendEmail(new ArrayList<String>(parentPost.getFollowers().values()), subject, compileEmailTemplate(model));
+				}
+				// also notify all mods/admins who wish to monitor all answers
+				Set<String> emails = new HashSet<String>(getNotificationSubscribers(EMAIL_ALERTS_PREFIX + "new_reply_subscribers"));
+				sendEmailsToSubscribersInSpace(emails, parentPost.getSpace(), subject, compileEmailTemplate(model));
 			}
+		}
 
-			if (isReplyNotificationAllowed() && parentPost.hasFollowers()) {
-				emailer.sendEmail(new ArrayList<String>(parentPost.getFollowers().values()),
-						subject,
-						compileEmailTemplate(model));
-			}
+		if (isReplyNotificationAllowed()) {
+			createReportCopyOfNotificiation(name, postURL, subject, body, awaitingApproval);
+		}
+
+		if (awaitingApproval) {
+			Report rep = new Report();
+			rep.setName(parentPost.getTitle());
+			rep.setContent(Utils.abbreviate(Utils.markdownToHtml(reply.getBody()), 2000));
+			rep.setParentid(reply.getId());
+			rep.setDescription(lang.get("reports.awaitingapproval"));
+			rep.setSubType(Report.ReportType.OTHER);
+			rep.setLink(parentPost.getPostLink(false, false) + "#post-" + reply.getId());
+			rep.setAuthorName(replyAuthor.getName());
+			rep.create();
 		}
 	}
 
@@ -725,25 +802,41 @@ public final class ScooldUtils {
 				last5ids.add(parentPost.getCreatorid());
 			}
 			Map<String, String> lang = getLang(req);
-			List<Profile> last5commentators = pc.readAll(new ArrayList<>(last5ids));
-			last5commentators = last5commentators.stream().filter(u -> u.getCommentEmailsEnabled()).collect(Collectors.toList());
-			pc.readAll(last5commentators.stream().map(u -> u.getCreatorid()).collect(Collectors.toList())).forEach(author -> {
-				if (isCommentNotificationAllowed()) {
-					Map<String, Object> model = new HashMap<String, Object>();
-					String name = commentAuthor.getName();
-					String body = Utils.markdownToHtml(comment.getComment());
-					String pic = Utils.formatMessage("<img src='{0}' width='25'>",
+
+			if (isCommentNotificationAllowed()) {
+				final List<Profile> last5 = pc.readAll(new ArrayList<>(last5ids));
+				List<Profile> last5commentators = last5.stream().filter(u -> u.getCommentEmailsEnabled()).collect(Collectors.toList());
+				Map<String, Object> model = new HashMap<String, Object>();
+				String name = commentAuthor.getName();
+				String body = Utils.markdownToHtml(comment.getComment());
+				String pic = Utils.formatMessage("<img src='{0}' width='25'>",
 						escapeHtmlAttribute(avatarRepository.getLink(commentAuthor, AvatarFormat.Square25)));
-					String postURL = CONF.serverUrl() + parentPost.getPostLink(false, false);
-					String subject = Utils.formatMessage(lang.get("notification.comment.subject"), name, parentPost.getTitle());
-					model.put("subject", escapeHtml(subject));
-					model.put("logourl", getSmallLogoUrl());
-					model.put("heading", Utils.formatMessage(lang.get("notification.comment.heading"),
-							Utils.formatMessage("<a href='{0}'>{1}</a>", postURL, escapeHtml(parentPost.getTitle()))));
-					model.put("body", Utils.formatMessage("<h2>{0} {1}:</h2><div class='panel'>{2}</div>", pic, escapeHtml(name), body));
-					emailer.sendEmail(Arrays.asList(((User) author).getEmail()), subject, compileEmailTemplate(model));
-				}
-			});
+				String postURL = CONF.serverUrl() + parentPost.getPostLink(false, false) + "?commentid=" + comment.getId();
+				String subject = Utils.formatMessage(lang.get("notification.comment.subject"), name, parentPost.getTitle());
+				model.put("subject", escapeHtml(subject));
+				model.put("logourl", getSmallLogoUrl());
+				model.put("heading", Utils.formatMessage(lang.get("notification.comment.heading"),
+						Utils.formatMessage("<a href='{0}'>{1}</a>", postURL, escapeHtml(parentPost.getTitle()))));
+				model.put("body", Utils.formatMessage("<h2>{0} {1}:</h2><div class='panel'>{2}</div>", pic, escapeHtml(name), body));
+
+				List<String> emails = pc.readAll(last5commentators.stream().map(u -> u.getCreatorid()).collect(Collectors.toList())).
+						stream().map(author -> ((User) author).getEmail()).collect(Collectors.toList());
+
+				emailer.sendEmail(emails, subject, compileEmailTemplate(model));
+				createReportCopyOfNotificiation(name, postURL, subject, body, false);
+			}
+		}
+	}
+
+	private void createReportCopyOfNotificiation(String author, String url, String subject, String template, boolean awaitingApproval) {
+		if (CONF.notificationsAsReportsEnabled() && !awaitingApproval) {
+			Report rep = new Report();
+			rep.setContent(template);
+			rep.setDescription(subject);
+			rep.setSubType(Report.ReportType.OTHER);
+			rep.setLink(url);
+			rep.setAuthorName(author);
+			rep.create();
 		}
 	}
 
@@ -756,15 +849,6 @@ public final class ScooldUtils {
 
 	private String escapeHtml(String value) {
 		return StringEscapeUtils.escapeHtml4(value);
-	}
-
-	public Profile readAuthUser(HttpServletRequest req) {
-		Profile authUser = null;
-		User u = pc.me(HttpUtils.getStateParam(CONF.authCookie(), req));
-		if (u != null && isEmailDomainApproved(u.getEmail())) {
-			return getOrCreateProfile(u, req);
-		}
-		return authUser;
 	}
 
 	public Profile getAuthUser(HttpServletRequest req) {
@@ -1081,6 +1165,22 @@ public final class ScooldUtils {
 		}
 	}
 
+	public void getLinkedComment(Post showPost, HttpServletRequest req) {
+		if (showPost != null && req.getParameter("commentid") != null) {
+			Comment c = pc.read(req.getParameter("commentid"));
+			if (c != null) {
+				if (showPost.getComments() == null) {
+					showPost.setComments(List.of(c));
+					showPost.getItemcount().setCount(1);
+				} else {
+					Set<Comment> comments = new LinkedHashSet<>(showPost.getComments());
+					comments.add(c);
+					showPost.setComments(List.of(comments.toArray(Comment[]::new)));
+				}
+			}
+		}
+	}
+
 	public void getVotes(List<Post> allPosts, Profile authUser) {
 		if (authUser == null) {
 			return;
@@ -1171,8 +1271,21 @@ public final class ScooldUtils {
 	}
 
 	public boolean isMod(Profile authUser) {
-		return authUser != null && (isAdmin(authUser) ||
-				(User.Groups.MODS.toString().equals(authUser.getGroups()) && authUser.getEditorRoleEnabled()));
+		if (authUser == null || !authUser.getEditorRoleEnabled()) {
+			return false;
+		}
+		if (ScooldUtils.getConfig().modsAccessAllSpaces()) {
+			return isAdmin(authUser) || User.Groups.MODS.toString().equals(authUser.getGroups());
+		} else {
+			return isAdmin(authUser) || authUser.isModInCurrentSpace();
+		}
+	}
+
+	public boolean isModAnywhere(Profile authUser) {
+		if (authUser == null) {
+			return false;
+		}
+		return ScooldUtils.getConfig().modsAccessAllSpaces() ? isMod(authUser) : !authUser.getModspaces().isEmpty();
 	}
 
 	public boolean isRecognizedAsAdmin(User u) {
@@ -1184,12 +1297,16 @@ public final class ScooldUtils {
 		return isAuthenticated(req) && ((authUser.hasBadge(ENTHUSIAST) || CONF.newUsersCanComment() || isMod(authUser)));
 	}
 
-	public boolean postsNeedApproval() {
-		return CONF.postsNeedApproval();
+	public boolean postsNeedApproval(HttpServletRequest req) {
+		Profile authUser = getAuthUser(req);
+		String spaceId = getSpaceId(getSpaceIdFromCookie(authUser, req));
+		Sysprop s = getAllSpaces().parallelStream().filter(ss -> ss.getId().equals(spaceId)).findFirst().orElse(null);
+		return (s == null) ? CONF.postsNeedApproval() :
+				(boolean) s.getProperties().getOrDefault("posts_need_approval", CONF.postsNeedApproval());
 	}
 
-	public boolean postNeedsApproval(Profile authUser) {
-		return postsNeedApproval() && authUser.getVotes() < CONF.postsReputationThreshold() && !isMod(authUser);
+	public boolean userNeedsApproval(Profile authUser) {
+		return (authUser == null || authUser.getVotes() < CONF.postsReputationThreshold()) && !isMod(authUser);
 	}
 
 	public String getWelcomeMessage(Profile authUser) {
@@ -1206,6 +1323,13 @@ public final class ScooldUtils {
 					ParaObjectUtils.getAnnotatedFields(authUser, false)), welcomeMsgOnlogin);
 		}
 		return welcomeMsgOnlogin.replaceAll("'", "&apos;");
+	}
+
+	public String getWelcomeMessagePreLogin(Profile authUser, HttpServletRequest req) {
+		if (StringUtils.startsWithIgnoreCase(req.getRequestURI(), CONF.serverContextPath() + SIGNINLINK)) {
+			return authUser == null ? CONF.welcomeMessagePreLogin().replaceAll("'", "&apos;") : "";
+		}
+		return "";
 	}
 
 	public boolean isDefaultSpace(String space) {
@@ -1231,11 +1355,18 @@ public final class ScooldUtils {
 		return allSpaces;
 	}
 
+	public Set<Sysprop> getAllSpacesAdmin() {
+		if (allSpaces == null || pc.getCount("scooldspace").intValue() != allSpaces.size()) { // caching issue on >1 nodes
+			allSpaces = new LinkedHashSet<>(pc.findQuery("scooldspace", "*", new Pager(Config.DEFAULT_LIMIT)));
+		}
+		return allSpaces;
+	}
+
 	public boolean canAccessSpace(Profile authUser, String targetSpaceId) {
 		if (authUser == null) {
 			return isDefaultSpacePublic() && isDefaultSpace(targetSpaceId);
 		}
-		if (isMod(authUser) || isAllSpaces(targetSpaceId)) {
+		if ((isMod(authUser) && CONF.modsAccessAllSpaces()) || isAllSpaces(targetSpaceId)) {
 			return true;
 		}
 		if (StringUtils.isBlank(targetSpaceId) || targetSpaceId.length() < 2) {
@@ -1279,7 +1410,7 @@ public final class ScooldUtils {
 		// used for setting the space from a direct URL to a particular space
 		req.setAttribute(CONF.spaceCookie(), space);
 		HttpUtils.setRawCookie(CONF.spaceCookie(), Utils.base64encURL(space.getBytes()),
-				req, res, true, "Strict", StringUtils.isBlank(space) ? 0 : 365 * 24 * 60 * 60);
+				req, res, "Strict", StringUtils.isBlank(space) ? 0 : 365 * 24 * 60 * 60);
 	}
 
 	public String verifyExistingSpace(Profile authUser, String space) {
@@ -1349,7 +1480,7 @@ public final class ScooldUtils {
 
 	public String getSpaceFilter(Profile authUser, String spaceId) {
 		if (isAllSpaces(spaceId)) {
-			if (isMod(authUser)) {
+			if (isMod(authUser) && CONF.modsAccessAllSpaces()) {
 				return "*";
 			} else if (authUser != null && authUser.hasSpaces()) {
 				return "(" + authUser.getSpaces().stream().map(s -> "properties.space:\"" + s + "\"").
@@ -1647,8 +1778,15 @@ public final class ScooldUtils {
 	}
 
 	public Map<String, String> validateQuestionTags(Question q, Map<String, String> errors, HttpServletRequest req) {
-		if (CONF.minTagsPerPost() > Optional.ofNullable(q.getTags()).orElse(List.of()).stream().
-				filter(t -> !StringUtils.isBlank(t)).distinct().count()) {
+		Set<String> tagz = Optional.ofNullable(q.getTags()).orElse(List.of()).stream().
+				filter(t -> !StringUtils.isBlank(t)).distinct().collect(Collectors.toSet());
+		long tagCount = tagz.size();
+		if (!CONF.tagCreationAllowed() && !ScooldUtils.getInstance().isMod(q.getAuthor())) {
+			q.setTags(pc.findByIds(tagz.stream().map(t -> new Tag(t).getId()).collect(Collectors.toList())).stream().
+					map(tt -> ((Tag) tt).getTag()).collect(Collectors.toList()));
+			tagCount = q.getTags().size();
+		}
+		if (CONF.minTagsPerPost() > tagCount) {
 			errors.put(Config._TAGS, Utils.formatMessage(getLang(req).get("tags.toofew"), CONF.minTagsPerPost()));
 		}
 		return errors;
@@ -1663,11 +1801,12 @@ public final class ScooldUtils {
 			String jwt = HttpUtils.getStateParam(CONF.authCookie(), req);
 			if (!StringUtils.isBlank(jwt)) {
 				if (CONF.oneSessionPerUser()) {
-					synchronized (pc) {
-						pc.setAccessToken(jwt);
-						pc.revokeAllTokens();
-						pc.signOut();
-					}
+					logger.debug("Trying to revoke all user tokens for user...");
+					ParaClient pcc = new ParaClient(CONF.paraAccessKey(), CONF.paraSecretKey());
+					setParaEndpointAndApiPath(pcc);
+					pcc.setAccessToken(jwt);
+					pcc.revokeAllTokens();
+					pcc.signOut();
 				}
 				HttpUtils.removeStateParam(CONF.authCookie(), req, res);
 			}
@@ -1824,12 +1963,7 @@ public final class ScooldUtils {
 		if (StringUtils.isBlank(jti)) {
 			return false;
 		}
-		if (API_KEYS.isEmpty()) {
-			Sysprop s = pc.read("api_keys");
-			if (s != null) {
-				API_KEYS.putAll(s.getProperties());
-			}
-		}
+		loadApiKeysObject(); // prevent overwriting the API keys object
 		if (API_KEYS.containsKey(jti) && expired) {
 			revokeApiKey(jti);
 		}
@@ -1840,11 +1974,13 @@ public final class ScooldUtils {
 		if (StringUtils.isBlank(jti) || StringUtils.isBlank(jwt)) {
 			return;
 		}
+		loadApiKeysObject(); // prevent overwriting the API keys object
 		API_KEYS.put(jti, jwt);
 		saveApiKeysObject();
 	}
 
 	public void revokeApiKey(String jti) {
+		loadApiKeysObject(); // prevent overwriting the API keys object
 		API_KEYS.remove(jti);
 		saveApiKeysObject();
 	}
@@ -1855,13 +1991,16 @@ public final class ScooldUtils {
 
 	public Map<String, Long> getApiKeysExpirations() {
 		return API_KEYS.keySet().stream().collect(Collectors.toMap(k -> k, k -> {
+			String jwt = (String) API_KEYS.get(k);
 			try {
-				Date exp = SignedJWT.parse((String) API_KEYS.get(k)).getJWTClaimsSet().getExpirationTime();
-				if (exp != null) {
-					return exp.getTime();
+				if (!StringUtils.isBlank(jwt)) {
+					Date exp = SignedJWT.parse(jwt).getJWTClaimsSet().getExpirationTime();
+					if (exp != null) {
+						return exp.getTime();
+					}
 				}
 			} catch (ParseException ex) {
-				logger.error(null, ex);
+				logger.error("Failed to parse API key " + StringUtils.substring(jwt, 0, 10), ex);
 			}
 			return 0L;
 		}));
@@ -1871,6 +2010,15 @@ public final class ScooldUtils {
 		Sysprop s = new Sysprop("api_keys");
 		s.setProperties(API_KEYS);
 		pc.create(s);
+	}
+
+	private void loadApiKeysObject() {
+		if (API_KEYS.isEmpty()) {
+			Sysprop s = pc.read("api_keys");
+			if (s != null) {
+				API_KEYS.putAll(s.getProperties());
+			}
+		}
 	}
 
 	public Profile getSystemUser() {

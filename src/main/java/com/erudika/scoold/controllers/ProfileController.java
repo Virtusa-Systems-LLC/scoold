@@ -115,7 +115,7 @@ public class ProfileController {
 		boolean protekted = !utils.isDefaultSpacePublic() && !utils.isAuthenticated(req);
 		boolean sameSpace = (utils.canAccessSpace(showUser, "default") && utils.canAccessSpace(authUser, "default")) ||
 				(authUser != null && showUser.getSpaces().stream().anyMatch(s -> utils.canAccessSpace(authUser, s)));
-		if (protekted || !sameSpace) {
+		if (protekted || !sameSpace || !CONF.usersDiscoverabilityEnabled(utils.isAdmin(authUser))) {
 			return "redirect:" + PEOPLELINK;
 		}
 
@@ -155,7 +155,16 @@ public class ProfileController {
 			Profile showUser = pc.read(Profile.id(id));
 			if (showUser != null) {
 				if (utils.isAdmin(authUser) && !utils.isAdmin(showUser)) {
-					showUser.setGroups(utils.isMod(showUser) ? USERS.toString() : MODS.toString());
+					if (CONF.modsAccessAllSpaces()) {
+						showUser.setGroups(utils.isMod(showUser) ? USERS.toString() : MODS.toString());
+					} else {
+						String space = req.getParameter("space");
+						if (showUser.isModInSpace(space)) {
+							showUser.getModspaces().remove(space);
+						} else {
+							showUser.getModspaces().add(space);
+						}
+					}
 					showUser.update();
 				}
 			}
@@ -467,7 +476,7 @@ public class ProfileController {
 	public List<? extends Post> getQuestions(Profile authUser, Profile showUser, boolean isMyProfile, Pager itemcount) {
 		itemcount.setSortby("votes");
 		String spaceFilter = getSpaceFilter(authUser, isMyProfile);
-		if (utils.postsNeedApproval() && (isMyProfile || utils.isMod(authUser))) {
+		if (isMyProfile || utils.isMod(authUser)) {
 			return pc.findQuery("", getTypeQuery(Utils.type(Question.class), Utils.type(Sticky.class),
 					Utils.type(UnapprovedQuestion.class)) + " AND " + getAuthorQuery(showUser) + spaceFilter, itemcount);
 		} else {
@@ -479,7 +488,7 @@ public class ProfileController {
 	public List<? extends Post> getAnswers(Profile authUser, Profile showUser, boolean isMyProfile, Pager itemcount) {
 		itemcount.setSortby("votes");
 		String spaceFilter = getSpaceFilter(authUser, isMyProfile);
-		if (utils.postsNeedApproval() && (isMyProfile || utils.isMod(authUser))) {
+		if (isMyProfile || utils.isMod(authUser)) {
 			return pc.findQuery("", getTypeQuery(Utils.type(Reply.class), Utils.type(UnapprovedReply.class))
 								+ " AND " + getAuthorQuery(showUser) + spaceFilter, itemcount);
 		} else {

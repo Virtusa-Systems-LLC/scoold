@@ -187,7 +187,7 @@ public class ApiController {
 		post.setSpace(spaces.iterator().hasNext() ? spaces.iterator().next() : null);
 
 		if (post.isQuestion()) {
-			questionsController.post(post.getLocation(), post.getLatlng(), post.getAddress(), post.getSpace(),
+			questionsController.post(post.getLocation(), post.getLatlng(), post.getAddress(), post.getSpace(), post.getId(),
 					req, res, model);
 		} else if (post.isReply()) {
 			questionController.reply(post.getParentid(), "", null, req, res, model);
@@ -210,7 +210,7 @@ public class ApiController {
 			post.put("author", p.getAuthor());
 			if (Boolean.parseBoolean(req.getParameter("includeReplies"))) {
 				Pager itemcount = utils.getPager("pageReplies", req);
-				post.put("children", questionController.getAllAnswers(utils.getSystemUser(), p, itemcount));
+				post.put("children", questionController.getAllAnswers(utils.getSystemUser(), p, itemcount, req));
 			}
 			return post;
 		}).collect(Collectors.toList());
@@ -502,6 +502,7 @@ public class ApiController {
 	}
 
 	@PatchMapping("/users/{id}")
+	@SuppressWarnings("unchecked")
 	public Profile updateUser(@PathVariable String id, HttpServletRequest req, HttpServletResponse res) {
 		Map<String, Object> entity = readEntity(req);
 		if (entity.isEmpty()) {
@@ -524,9 +525,29 @@ public class ApiController {
 			res.setStatus(HttpStatus.NOT_FOUND.value());
 			return null;
 		}
+		boolean update = false;
 		if (entity.containsKey("spaces")) {
 			profile.setSpaces(new HashSet<>(readSpaces(((List<String>) entity.getOrDefault("spaces",
 						Collections.emptyList())).toArray(new String[0]))));
+			update = true;
+		}
+		if (entity.containsKey("replyEmailsEnabled")) {
+			profile.setReplyEmailsEnabled((Boolean) entity.get("replyEmailsEnabled"));
+			update = true;
+		}
+		if (entity.containsKey("commentEmailsEnabled")) {
+			profile.setCommentEmailsEnabled((Boolean) entity.get("commentEmailsEnabled"));
+			update = true;
+		}
+		if (entity.containsKey("favtagsEmailsEnabled")) {
+			profile.setFavtagsEmailsEnabled((Boolean) entity.get("favtagsEmailsEnabled"));
+			update = true;
+		}
+		if (entity.containsKey("favtags") && entity.get("favtags") instanceof List) {
+			profile.setFavtags((List<String>) entity.get("favtags"));
+			update = true;
+		}
+		if (update) {
 			pc.update(profile);
 		}
 		if (!StringUtils.isBlank(password)) {
@@ -809,7 +830,8 @@ public class ApiController {
 		if (StringUtils.isBlank(newName)) {
 			badReq("Property 'name' cannot be blank.");
 		}
-		adminController.renameSpace(id, "true".equals(req.getParameter("assigntoall")), newName, req, res);
+		adminController.renameSpace(id, "true".equals(req.getParameter("assigntoall")),
+				"true".equals(req.getParameter("needsapproval")), newName, req, res);
 	}
 
 	@GetMapping("/spaces")
@@ -986,8 +1008,9 @@ public class ApiController {
 	@PutMapping("/restore")
 	public void restore(@RequestParam("file") MultipartFile file,
 			@RequestParam(required = false, defaultValue = "false") Boolean isso,
+			@RequestParam(required = false, defaultValue = "false") Boolean deleteall,
 			HttpServletRequest req, HttpServletResponse res) {
-		adminController.restore(file, isso, req, res);
+		adminController.restore(file, isso, deleteall, req, res);
 	}
 
 	@GetMapping("/config")
@@ -1077,6 +1100,9 @@ public class ApiController {
 		List<String> ids = spaces.stream().map(s -> utils.getSpaceId(s)).
 				filter(s -> !s.isEmpty() && !utils.isDefaultSpace(s)).distinct().collect(Collectors.toList());
 		List<Sysprop> existing = pc.readAll(ids);
+		if (spaces.contains(Post.DEFAULT_SPACE) || spaces.contains("default")) {
+			existing.add(utils.buildSpaceObject(Post.DEFAULT_SPACE));
+		}
 		return existing.stream().map(s -> s.getId() + Para.getConfig().separator() + s.getName()).collect(Collectors.toList());
 	}
 

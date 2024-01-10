@@ -15,7 +15,7 @@
  *
  * For issues and patches go to: https://github.com/erudika
  */
-/*global window: false, jQuery: false, $: false, google, hljs, RTL_ENABLED, CONTEXT_PATH, M, CONFIRM_MSG, WELCOME_MESSAGE, WELCOME_MESSAGE_ONLOGIN, MAX_TAGS_PER_POST, MIN_PASS_LENGTH, AVATAR_UPLOADS_ENABLED, IMGUR_CLIENT_ID, IMGUR_ENABLED, CLOUDINARY_ENABLED, MAX_FAVORITE_TAGS: false */
+/*global window: false, jQuery: false, $: false, google, hljs, RTL_ENABLED, CONTEXT_PATH, M, CONFIRM_MSG, WELCOME_MESSAGE, WELCOME_MESSAGE_ONLOGIN, MAX_TAGS_PER_POST, MIN_PASS_LENGTH, AVATAR_UPLOADS_ENABLED, IMGUR_CLIENT_ID, IMGUR_ENABLED, CLOUDINARY_ENABLED, MAX_FAVORITE_TAGS, TAG_CREATION_ALLOWED: false */
 "use strict";
 $(function () {
 	var mapCanvas = $("div#map-canvas");
@@ -349,11 +349,12 @@ $(function () {
 
 	$(document).on("click", ".post-refresh-ask",  function() {
 		var elem = $(this);
-		return areYouSure(function() {
+		areYouSure(function() {
 			$.post(elem.attr("href"), function(data) {
-				window.location = elem.attr("href");
+				window.location.reload(true);
 			});
 		}, rusuremsg, false);
+		return false;
 	});
 
 	$(document).on("click", ".post-refresh",  function() {
@@ -364,12 +365,14 @@ $(function () {
 	});
 
 	$(document).on("click", ".permalink",  function() {
-		if ($(this).attr("href") === $(this).text()) {
-			return true;
-		} else {
-			$(this).text($(this).attr("href"));
-			return false;
-		}
+		navigator.clipboard.writeText(this.href);
+		var that = $(this).find("i");
+		var attr = that.attr("class");
+		that.text("Copied!").attr("class", "green-text smallText");
+		setTimeout(function () {
+			that.text("").attr("class", attr);
+		}, 2000);
+		return false;
 	});
 
 	$(document).on("click", ".click2hide",  function() {
@@ -390,14 +393,14 @@ $(function () {
 	});
 
 	$(document).on("click", ".close-infostrip", function () {
-		var name = $(this).closest(".infostrip").hide().data("name");
+		var name = $(this).closest(".infostrip,.infostrip2").hide().data("name");
 		localStorage.setItem(name + "-hidden", "true");
 		return false;
 	});
 
 	if (WELCOME_MESSAGE && WELCOME_MESSAGE.trim().length > 0) {
 		var hidden = "true" === localStorage.getItem("welcome-message-hidden");
-		if (!hidden && window.location.pathname !== CONTEXT_PATH + "/signin") {
+		if (!hidden && window.location.pathname.indexOf(CONTEXT_PATH + "/signin") < 0) {
 			$(".infostrip").removeClass("hide").data("name", "welcome-message");
 			$(".infostrip-content").html(WELCOME_MESSAGE);
 		}
@@ -405,9 +408,17 @@ $(function () {
 
 	if (WELCOME_MESSAGE_ONLOGIN && WELCOME_MESSAGE_ONLOGIN.trim().length > 0) {
 		var hidden = "true" === localStorage.getItem("welcome-message-onlogin-hidden");
-		if (!hidden && window.location.pathname !== CONTEXT_PATH + "/signin") {
+		if (!hidden && window.location.pathname.indexOf(CONTEXT_PATH + "/signin") < 0) {
 			$(".infostrip").removeClass("hide").data("name", "welcome-message-onlogin");
 			$(".infostrip-content").html(WELCOME_MESSAGE_ONLOGIN);
+		}
+	}
+
+	if (WELCOME_MESSAGE_PRELOGIN && WELCOME_MESSAGE_PRELOGIN.trim().length > 0) {
+		var hidden = "true" === localStorage.getItem("welcome-message-prelogin-hidden");
+		if (!hidden) {
+			$(".infostrip2").removeClass("hide").data("name", "welcome-message-prelogin");
+			$(".infostrip2-content").html(WELCOME_MESSAGE_PRELOGIN);
 		}
 	}
 
@@ -519,10 +530,34 @@ $(function () {
 		clearForm(form);
 	});
 
-	submitFormBind("form.close-report-form", function(data, status, xhr, form) {
-		var parent = $(form).closest(".reportbox");
+	function closeReport(parent, click) {
+		parent.addClass("closed-report z-depth-0");
 		parent.find(".report-closed-icon").removeClass("hide");
-		parent.find(".report-close-btn").click().hide();
+		if (click) {
+			parent.find(".report-close-btn").click();
+		}
+		parent.find(".report-close-btn,.approve-btn").addClass("hide");
+		parent.find(".report-open-btn").removeClass("hide");
+	}
+
+	submitFormBind("form.close-report-form", function(data, status, xhr, form) {
+		closeReport($(form).closest(".reportbox"), true);
+	});
+
+	$(".approve-btn").on("click", function(e) {
+		$.post($(this).attr("href"));
+		closeReport($(this).closest(".reportbox"), false);
+		return false;
+	});
+
+	$(".report-open-btn").on("click", function(e) {
+		$.post($(this).attr("href"));
+		var parent = $(this).closest(".reportbox");
+		parent.removeClass("closed-report z-depth-0");
+		parent.find(".report-closed-icon").addClass("hide");
+		parent.find(".report-close-btn,.approve-btn").removeClass("hide");
+		parent.find(".report-open-btn").addClass("hide");
+		return false;
 	});
 
 	/****************************************************
@@ -576,8 +611,14 @@ $(function () {
 		var dis = $(this);
 		$.post(dis.attr("href"));
 		dis.find("span").toggleClass("hide");
-		$(".moderator-icon").toggleClass("hide");
-		$(".moderator-icon").parent("div").toggleClass("hide");
+		var modCount = $(".smallspacebox.orange-border").length;
+		dis.closest(".smallspacebox").toggleClass("orange-border");
+		if ((modCount === 0 && $(".smallspacebox.orange-border").length === 0) ||
+				(modCount === 0 && $(".smallspacebox.orange-border").length === 1) ||
+				(modCount === 1 && $(".smallspacebox.orange-border").length === 0)) {
+			$(".moderator-icon").toggleClass("hide");
+			$(".moderator-icon").parent("div").toggleClass("hide");
+		}
 		return false;
 	});
 
@@ -742,6 +783,15 @@ $(function () {
 		return false;
 	});
 
+	$("#newpostEmailsFilter select").on("change", function () {
+		var selected = $(this).find("option:not([disabled])").filter(":selected").length;
+		if (selected > 0) {
+			$(this).find("option[disabled]").removeAttr("selected");
+		} else {
+			$(this).find("option[disabled]").attr("selected");
+		}
+	});
+
 	/****************************************************
      *                    MODAL DIALOGS
      ****************************************************/
@@ -869,7 +919,11 @@ $(function () {
      ****************************************************/
 
 	if (window.location.hash !== "" && window.location.hash.match(/^#post-.*/)) {
-		$(window.location.hash).addClass("selected-post");
+		try {
+			$(window.location.hash).addClass("selected-post");
+		} catch (e) {
+			console.error(e);
+		}
 	}
 
 	$(document).on('click', '.page-content .questionbox',  function () {
@@ -925,6 +979,7 @@ $(function () {
 		var mde = new EasyMDE({
 			element: elem,
 			autoDownloadFontAwesome: false,
+			sideBySideFullscreen: false,
 			showIcons: ["code", "table", "strikethrough"],
 			spellChecker: false,
 			promptURLs: true,
@@ -1280,14 +1335,18 @@ $(function () {
 		});
 	});
 
-	$(".permalink").on("click", function (e) {
-		navigator.clipboard.writeText(this.href);
-		var that = $(this).find("i");
-		var attr = that.attr("class");
-		that.text("Copied!").attr("class", "green-text smallText");
+	$(".save-question-template").find("a").on("click", function (e) {
+		var dis = $(this);
+		var txt = dis.text();
+		dis.text("Saved!").attr("class", "green-text smallText");
 		setTimeout(function () {
-			that.text("").attr("class", attr);
-		}, 2000);
+			dis.text(txt).attr("class", "");
+		}, 3000);
+		$.post(dis.attr("href"), {
+			title: localStorage.getItem("ask-form-title"),
+			body: localStorage.getItem("ask-form-body"),
+			tags: localStorage.getItem("ask-form-tags")
+		});
 		return false;
 	});
 
@@ -1441,6 +1500,12 @@ $(function () {
 			minLength: 2
 		},
 		onChipAdd: function (c) {
+			if (autocompleteChipsInstance && !TAG_CREATION_ALLOWED) {
+				var txt = autocompleteChipsInstance.chipsData[autocompleteChipsInstance.chipsData.length - 1];
+				if (!autocompleteChipsInstance.autocomplete.options.data.hasOwnProperty(txt.tag)) {
+					autocompleteChipsInstance.deleteChip(autocompleteChipsInstance.chipsData.length - 1);
+				}
+			}
 			$(c).find('i.close').text("");
 			autocomplete.next('input[type=hidden]').val(this.chipsData.map(function (c) {
 				return c.tag;
@@ -1460,9 +1525,7 @@ $(function () {
 			if (val && val.length > 0) {
 				$.get(CONTEXT_PATH + "/tags/" + val, function (data) {
 					var tags = {};
-					if (data.length === 0) {
-						data.push({tag: val});
-					}
+					//if (data.length === 0) {data.push({tag: val});}
 					data.map(function (t) {
 						tags[t.tag] = null;
 					});

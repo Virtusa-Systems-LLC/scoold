@@ -13,8 +13,8 @@
 				<div class="input-field mvn">
 					#set($maxplus1 = $!maxCommentLength + 1)
 					<label for="new-comment-$!{parentid}">$!lang.get('comment.title')
-						<span class="grey-text mhs"><i class="fa fa-info-circle"></i> Markdown can be used here, e.g.
-						<b>[link](http://url.com)</b> <b>`code`</b> <b>**bold**</b> <b>*italic*</b></span>
+						<span class="grey-text mhs"><i class="fa fa-info-circle"></i> $!lang.get('comments.markdown'), e.g.
+						<span>[link](http://url.com)</span> <code>`code`</code> <b>**bold**</b> <i>*italic*</i></small>
 					</label>
 					<input id="new-comment-$!{parentid}" type="text" name="comment" value=""
 								 data-length="$!maxCommentLength" maxlength="$!maxplus1" class="validate charcounter" required>
@@ -41,7 +41,7 @@
 		#set($hidden = "noclass")
 	#end
 
-	<div class="mbs ${hidden}">
+	<div class="mbs ${hidden} #if($request.getParameter('commentid') == $showcomment.id)sticky-post card-panel mediumText#end">
 		#votebox($showcomment "left mrm pbs")
 		#set($_commentHtml = $utils.markdownToHtml($!showcomment.comment))
 		<div class="comment-text">$!{_commentHtml}</div>
@@ -59,6 +59,9 @@
 		#else
 			#getreportlink($showcomment "$commentlink/$!showcomment.id" "noicon")
 		#end
+		<a href="$questionlink/$!showcomment.parentid?commentid=$!showcomment.id" title="Copy permalink" class="permalink phs">
+			<i class="fa fa-share-square"></i>
+		</a>
 	</div>
 </div>
 #end
@@ -134,6 +137,13 @@
 							<span>$!lang.get('assignspacetoall')</span>
 						</label>
 					</div>
+					<div class="mbm smallText">
+						<label>
+							<input type="checkbox" name="needsapproval" class="filled-in"
+										 #if($space.getProperties().getOrDefault("posts_need_approval", $scooldUtils.config.postsNeedApproval()))checked="checked"#end>
+							<span>$!lang.get('admin.needapproval')</span>
+						</label>
+					</div>
 					<a href="$adminlink/remove-space?space=$!space.id:$!space.name"
 						 class="red-text right mts delete-space">$!lang.get('delete')</a>
 					<button class="btn waves-effect waves-light" type="submit">$!lang.get('save')</button>
@@ -159,7 +169,7 @@
 		$scooldUtils.getSpaceName($!currentSpace)
 	#end
 	<a href="$questionslink/space/$scooldUtils.getSpaceId($!currentSpace)"
-		 class="hide tooltipped" data-tooltip="Copy link"><i class="fa fa-bookmark-o"></i></a>
+		 class="hide tooltipped" data-tooltip="Copy link"><i class="fa fa-share-square-o"></i></a>
 </p>
 #end
 ####################################
@@ -435,8 +445,9 @@
 						</ul>
 					</div>
 					#end
+					#set($hideSpacesForMods = ($scooldUtils.isMod($showFriend) && $scooldUtils.config.modsAccessAllSpaces()))
 					<div class="person-name ${ptmClass}">
-						#if($isAdmin && $request.getParameter("bulkedit") && !$scooldUtils.isMod($showFriend))
+						#if($isAdmin && $request.getParameter("bulkedit") && !$hideSpacesForMods)
 							<span class="grey-text l">
 								<label for="$!showFriend.id">
 									<input type="checkbox" name="selectedUsers" value="$!showFriend.id" class="filled-in" id="$!showFriend.id">
@@ -449,7 +460,7 @@
 							<a href="$profilelink/${showFriend.creatorid}/#stripstr($!showFriend.name)">$!{showFriend.name}</a>
 						#end
 					</div>
-					#if($isAdmin && $request.getParameter("bulkedit") && !$scooldUtils.isMod($showFriend))
+					#if($isAdmin && $request.getParameter("bulkedit") && !$hideSpacesForMods)
 						<div class="smallText">
 							<i class="fa fa-th-large grey-text"></i>
 							#if(!$showFriend.hasSpaces() || $showFriend.getSpaces().contains($scooldUtils.getDefaultSpace()))
@@ -599,7 +610,7 @@
 						#if($showpost.type == "unapprovedquestion")
 						<i class="fa fa-exclamation-circle grey-text tooltipped" data-tooltip="$!lang.get('posts.unapproved')"></i>
 						#end
-						<a href="$!actionlink/$showpost.id/#stripstr($!showpost.title)" class="mediumText">
+						<a href="$!actionlink/$!utils.urlEncode($showpost.id)/#stripstr($!showpost.title)" class="mediumText">
 							#if($showSpaceLabel)
 								#set($spaceLabel = "$!scooldUtils.getSpaceName($!showpost.space)")
 								#if(!$spaceLabel.trim().isEmpty())
@@ -622,7 +633,7 @@
 						<i class="fa fa-link grey-text"></i> <a href="$!firstLink">$firstLink</a>
 						#end
 						<span class="right">
-							#if(!$request.requestURI.startsWith("/profile"))
+							#if(!$request.requestURI.startsWith("$!CONTEXT_PATH/profile"))
 								#personlink($showpost.author)
 							#end
 							<span class="grey-text"><i class="fa fa-clock-o"></i>	#formatdate($showpost.timestamp "")</span>
@@ -662,7 +673,7 @@
 							#if($showpost.type == "unapprovedquestion")
 								<i class="fa fa-exclamation-circle grey-text tooltipped" data-tooltip="$!lang.get('posts.unapproved')"></i>
 							#end
-							<a href="$!actionlink/$showpost.id/#stripstr($!showpost.title)" class="mediumText">$!showpost.title</a>
+							<a href="$!actionlink/$!utils.urlEncode($showpost.id)/#stripstr($!showpost.title)" class="mediumText">$!showpost.title</a>
 						</div>
 						<div class="mbs">
 							#set($showBody = $utils.stripHtml($utils.markdownToHtml($utils.stripHtml($!showpost.body))) )
@@ -670,7 +681,7 @@
 						</div>
 					</div>
 					<div class="col s2 m1 l3">
-						#if(!$request.requestURI.startsWith("/profile"))
+						#if(!$request.requestURI.startsWith("$!CONTEXT_PATH/profile"))
 							<div class=" hide-on-med-and-down">
 								#smallpersonbox($showpost.author)
 							</div>
@@ -715,7 +726,7 @@
 					</div>
 				</div>
 				<div class="col s12 m2 l3 columns">
-					#if(!$request.requestURI.startsWith("/profile"))
+					#if(!$request.requestURI.startsWith("$!CONTEXT_PATH/profile"))
 						<div class="r">
 							#tinypersonbox($answer.author)
 						</div>
@@ -737,6 +748,9 @@
 ####################################
 #macro(postbox $showpost $parentpost)
 #set($actionlink = "#getpostlink($showpost false true)")
+#if($showpost.id != $!utils.urlEncode($showpost.id))
+	$showpost.setId($!utils.urlEncode($showpost.id))
+#end
 #if($request.getServletPath().endsWith("/edit-post-$!showpost.id"))#set($resumeEditPost = "resume-editing")#else#set($resumeEditPost = "" )#end
 <div id="$!showpost.id" class="postbox $!{showpost.type}box $!{resumeEditPost}">
 	#if($showpost.isReply())<hr>#end
@@ -799,8 +813,8 @@
 							<i class="fa fa-bell-o"></i>
 						</a> &nbsp;
 						#end
-						<a href="$!actionlink/$!{showpost.id}#post-$!showpost.id" title="Permalink" class="permalink">
-							<i class="fa fa-bookmark"></i>
+						<a href="$!actionlink/#if($showpost.parentid)$!{showpost.parentid}#else$!{showpost.id}#end#post-$!showpost.id" title="Copy permalink" class="permalink">
+							<i class="fa fa-share-square"></i>
 						</a>
 					</div>
 
@@ -817,7 +831,7 @@
 					#end
 
 					#if ($canComment && !$showpost.isFeedback() && $scooldUtils.alwaysHideCommentForms())
-						<a href="#" title="Add a comment" class="next-div-toggle prm"><i class="fa fa-commenting"></i> $!lang.get("comments.write")</a>
+						<a href="#" title="Add a comment" class="next-div-toggle prm add-comment-link"><i class="fa fa-commenting"></i> $!lang.get("comments.write")</a>
 					#end
 
 					#if ($showpost.lasteditby)
@@ -838,6 +852,12 @@
 						<a href="$!actionlink/$showpost.id/deprecate" title="Deprecate" class="post-refresh-ask prm">
 							<i class="fa fa-exclamation-circle"></i> $!lang.get("deprecate")</a>
 						#end
+					#end
+
+					#if ($scooldUtils.isMod($authUser) && $showpost.isReply())
+						<a href="$!actionlink/$showpost.parentid/make-comment/$showpost.id" title="Convert to comment" class="post-refresh-ask prm">
+							<i class="fa fa-level-up"></i> $!lang.get('posts.makecomment')
+						</a>
 					#end
 
 					#if (!$authenticated || ($authenticated && $showpost.creatorid != $authUser.id))
@@ -1087,7 +1107,7 @@ $utils.formatDate($date, $format, $currentLocale)
 #if($text && !$text.isEmpty())
 	<div class="chip phl ${class}">
 		<i class="fa fa-close close"></i>
-		<div class="msg mrl left">#if($text == "") &nbsp; #else $text #end</div>
+		<div class="msg mrl left-align">#if($text == "") &nbsp; #else $text #end</div>
 	</div>
 #end
 #end
@@ -1150,6 +1170,13 @@ $utils.formatDate($date, $format, $currentLocale)
 			#end
 		</div>
 	</div>
+
+	#if(!$scooldUtils.getWelcomeMessagePreLogin($authUser, $request).isEmpty())
+	<div class="card-panel infostrip2 click2hide hide">
+			<a href="#" class="right close-infostrip"><i class="fa fa-times"></i></a>
+			<div class="infostrip2-content"></div>
+	</div>
+	#end
 #end
 #####################################
 #macro(externalScripts $inhead)

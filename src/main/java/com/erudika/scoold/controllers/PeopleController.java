@@ -24,6 +24,7 @@ import com.erudika.para.core.utils.Pager;
 import com.erudika.para.core.utils.ParaObjectUtils;
 import com.erudika.para.core.utils.Utils;
 import com.erudika.scoold.ScooldConfig;
+import static com.erudika.scoold.ScooldServer.HOMEPAGE;
 import static com.erudika.scoold.ScooldServer.PEOPLELINK;
 import static com.erudika.scoold.ScooldServer.SIGNINLINK;
 import com.erudika.scoold.core.Badge;
@@ -85,6 +86,11 @@ public class PeopleController {
 			return "redirect:" + PEOPLELINK + "?bulkedit=true";
 		}
 		Profile authUser = utils.getAuthUser(req);
+
+		if (!CONF.usersDiscoverabilityEnabled(utils.isAdmin(authUser))) {
+			return "redirect:" + HOMEPAGE;
+		}
+
 		getUsers(q, sortby, tag, authUser, req, model);
 		model.addAttribute("path", "people.vm");
 		model.addAttribute("title", utils.getLang(req).get("people.title"));
@@ -161,7 +167,7 @@ public class PeopleController {
 				p.setSelect(spacesList);
 				savePagerToCookie(req, res, p);
 				HttpUtils.setRawCookie("users-view-compact", compactViewEnabled,
-						req, res, false, "Strict", (int) TimeUnit.DAYS.toSeconds(365));
+						req, res, "Strict", (int) TimeUnit.DAYS.toSeconds(365));
 			}
 		}
 		return "redirect:" + PEOPLELINK + (bulkedit ? "/bulk-edit" : "") + (StringUtils.isBlank(sortby) ? "" : "?sortby="
@@ -183,6 +189,9 @@ public class PeopleController {
 		if (!qs.endsWith("*") && q.equals("*")) {
 			qs += " OR properties.groups:(admins OR mods)"; // admins are members of every space and always visible
 		}
+
+		String spaceFilter = utils.sanitizeQueryString("", req).replaceAll("properties\\.space:", "properties.spaces:");
+		qs = utils.getUsersSearchQuery(qs, spaceFilter);
 
 		Set<String> havingSpaces = Optional.ofNullable((Set<String>) model.getAttribute("havingSpaces")).orElse(Set.of());
 		Set<String> notHavingSpaces = Optional.ofNullable((Set<String>) model.getAttribute("notHavingSpaces")).orElse(Set.of());
@@ -257,7 +266,7 @@ public class PeopleController {
 	private void savePagerToCookie(HttpServletRequest req, HttpServletResponse res, Pager p) {
 		try {
 			HttpUtils.setRawCookie("users-filter", Utils.base64enc(ParaObjectUtils.getJsonWriterNoIdent().
-					writeValueAsBytes(p)), req, res, false, "Strict", (int) TimeUnit.DAYS.toSeconds(365));
+					writeValueAsBytes(p)), req, res, "Strict", (int) TimeUnit.DAYS.toSeconds(365));
 		} catch (JsonProcessingException ex) { }
 	}
 
@@ -272,7 +281,7 @@ public class PeopleController {
 		} else {
 			badgez = Collections.emptyList();
 		}
-		profiles.stream().filter(p -> !utils.isMod(p)).forEach(p -> {
+		profiles.stream().filter(p -> !(utils.isMod(p) && CONF.modsAccessAllSpaces())).forEach(p -> {
 			if ("add".equals(operation)) {
 				if (bulkEditBadges) {
 					badgez.forEach(badge -> p.addCustomBadge(badge));

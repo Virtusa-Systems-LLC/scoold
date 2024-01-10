@@ -59,6 +59,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -181,7 +182,7 @@ public class AdminController {
 					authUser.getSpaces().add(spaceObj.getId() + Para.getConfig().separator() + spaceObj.getName());
 					authUser.update();
 					model.addAttribute("space", spaceObj);
-					utils.getAllSpaces().add(spaceObj);
+					utils.getAllSpacesAdmin().add(spaceObj);
 				} else {
 					model.addAttribute("error", Collections.singletonMap("name", utils.getLang(req).get("posts.error1")));
 				}
@@ -205,7 +206,7 @@ public class AdminController {
 			pc.delete(s);
 			authUser.getSpaces().remove(space);
 			authUser.update();
-			utils.getAllSpaces().remove(s);
+			utils.getAllSpacesAdmin().remove(s);
 		}
 		if (utils.isAjaxRequest(req)) {
 			res.setStatus(200);
@@ -218,6 +219,7 @@ public class AdminController {
 	@PostMapping("/rename-space")
 	public String renameSpace(@RequestParam String space,
 			@RequestParam(required = false, defaultValue = "false") Boolean assigntoall,
+			@RequestParam(required = false, defaultValue = "false") Boolean needsapproval,
 			@RequestParam String newspace, HttpServletRequest req, HttpServletResponse res) {
 		Profile authUser = utils.getAuthUser(req);
 		Sysprop s = pc.read(utils.getSpaceId(space));
@@ -226,10 +228,6 @@ public class AdminController {
 			String newSpace = s.getId() + Para.getConfig().separator() + newspace;
 			if (!origSpace.equals(newSpace)) {
 				s.setName(newspace);
-				pc.update(s);
-				utils.getAllSpaces().parallelStream().
-						filter(ss -> ss.getId().equals(s.getId())).
-						forEach(e -> e.setName(newspace));
 				pc.updateAllPartially((toUpdate, pager) -> {
 					String query = "properties.spaces:(\"" + origSpace + "\")";
 					List<Profile> profiles = pc.findQuery(Utils.type(Profile.class), query, pager);
@@ -258,11 +256,17 @@ public class AdminController {
 			if (utils.isAutoAssignedSpace(s) ^ assigntoall) {
 				s.setTags(assigntoall ? List.of("assign-to-all") : List.of());
 				utils.assingSpaceToAllUsers(assigntoall ? s : null);
-				pc.update(s);
-				utils.getAllSpaces().parallelStream().
-						filter(ss -> ss.getId().equals(s.getId())).
-						forEach(e -> e.setTags(s.getTags()));
 			}
+
+			s.addProperty("posts_need_approval", needsapproval && CONF.postsNeedApproval());
+			pc.update(s);
+			utils.getAllSpacesAdmin().parallelStream().
+					filter(ss -> ss.getId().equals(s.getId())).
+					forEach(e -> {
+						e.setName(s.getName());
+						e.setTags(s.getTags());
+						e.setProperties(s.getProperties());
+					});
 		}
 		if (utils.isAjaxRequest(req)) {
 			res.setStatus(200);
@@ -385,11 +389,21 @@ public class AdminController {
 	@PostMapping("/import")
 	public String restore(@RequestParam("file") MultipartFile file,
 			@RequestParam(required = false, defaultValue = "false") Boolean isso,
+			@RequestParam(required = false, defaultValue = "false") Boolean deleteall,
 			HttpServletRequest req, HttpServletResponse res) {
 		Profile authUser = utils.getAuthUser(req);
 		if (!utils.isAdmin(authUser)) {
 			res.setStatus(403);
 			return null;
+		}
+		if (deleteall) {
+			logger.info("Deleting all existing objects before import...");
+			pc.readEverything((pager) -> {
+				pager.setSelect(Collections.singletonList(Config._ID));
+				List<Sysprop> objects = pc.findQuery("", "*", pager);
+				pc.deleteAll(objects.stream().map(r -> r.getId()).collect(Collectors.toList()));
+				return objects;
+			});
 		}
 		ObjectReader reader = ParaObjectUtils.getJsonMapper().readerFor(new TypeReference<List<Map<String, Object>>>() { });
 		String filename = file.getOriginalFilename();
@@ -460,7 +474,6 @@ public class AdminController {
 				pc.update(si);
 			}
 		});
-		//return "redirect:" + ADMINLINK + "?error=true&imported=" + count;
 		return "redirect:" + ADMINLINK + "?success=true&imported=1#backup-tab";
 	}
 
@@ -565,10 +578,11 @@ public class AdminController {
 			if (StringUtils.equalsAnyIgnoreCase((String) obj.get("postType"), "question", "article")) {
 				p = new Question();
 				p.setTitle((String) obj.get("title"));
-				String t = StringUtils.stripStart(StringUtils.stripEnd((String) obj.
-						getOrDefault("tags", ""), "|"), "|");
+				String t = StringUtils.trimToEmpty(StringUtils.stripStart(StringUtils.stripEnd((String) obj.
+						getOrDefault("tags", ""), "|"), "|"));
 				p.setTags(Arrays.asList(t.split("\\|")));
 				p.setAnswercount(((Integer) obj.getOrDefault("answerCount", 0)).longValue());
+				p.setViewcount(((Integer) obj.getOrDefault("viewCount", 0)).longValue());
 				Integer answerId = (Integer) obj.getOrDefault("acceptedAnswerId", null);
 				p.setAnswerid(answerId != null ? "post_" + answerId : null);
 			} else if ("answer".equalsIgnoreCase((String) obj.get("postType"))) {
@@ -580,6 +594,7 @@ public class AdminController {
 			}
 			p.setId("post_" + (Integer) obj.getOrDefault("id", Utils.getNewId()));
 			p.setBody((String) obj.get("bodyMarkdown"));
+			p.setSpace((String) obj.getOrDefault("space", Post.DEFAULT_SPACE)); // optional
 			p.setVotes((Integer) obj.getOrDefault("score", 0));
 			p.setTimestamp(DateUtils.parseDate((String) obj.get("creationDate"), soDateFormat1, soDateFormat2).getTime());
 			Integer creatorId = (Integer) obj.getOrDefault("ownerUserId", null);
@@ -651,6 +666,7 @@ public class AdminController {
 		si.addProperty("count", ((int) si.getProperty("count")) + imported);
 	}
 
+	@SuppressWarnings("unchecked")
 	private void importUsersFromSO(List<Map<String, Object>> objs, List<ParaObject> toImport,
 			Map<String, User> accounts2emails, Sysprop si) throws ParseException {
 		logger.info("Importing {} users...", objs.size());
@@ -662,7 +678,9 @@ public class AdminController {
 			u.setActive(true);
 			u.setCreatorid(((Integer) obj.get("accountId")).toString());
 			u.setGroups("admin".equalsIgnoreCase((String) obj.get("userTypeId"))
-					? User.Groups.ADMINS.toString() : User.Groups.USERS.toString());
+					? User.Groups.ADMINS.toString() :
+					("mod".equalsIgnoreCase((String) obj.get("userTypeId")) ?
+							User.Groups.MODS.toString() : User.Groups.USERS.toString()));
 			u.setEmail(u.getId() + "@scoold.com");
 			u.setIdentifier(u.getEmail());
 			u.setName((String) obj.get("realName"));
@@ -670,14 +688,25 @@ public class AdminController {
 			u.setUpdated(StringUtils.isBlank(lastLogin) ? null :
 					DateUtils.parseDate(lastLogin, soDateFormat1, soDateFormat2).getTime());
 			u.setPicture((String) obj.get("profileImageUrl"));
-			u.setPassword(Utils.generateSecurityToken(10));
+
+			Sysprop s = new Sysprop();
+			s.setId(u.getIdentifier());
+			s.setName(Config._IDENTIFIER);
+			s.setCreatorid(u.getId());
+			String password = (String) obj.getOrDefault("passwordHash", Utils.bcrypt(Utils.generateSecurityToken(10)));
+			if (!StringUtils.isBlank(password)) {
+				s.addProperty(Config._PASSWORD, password);
+				u.setPassword(password);
+			}
 
 			Profile p = Profile.fromUser(u);
 			p.setVotes((Integer) obj.get("reputation"));
 			p.setAboutme((String) obj.getOrDefault("title", ""));
 			p.setLastseen(u.getUpdated());
+			p.setSpaces(new HashSet<String>((List<String>) obj.getOrDefault("spaces", List.of(Post.DEFAULT_SPACE))));
 			toImport.add(u);
 			toImport.add(p);
+			toImport.add(s);
 			imported += 2;
 
 			User cachedUser = accounts2emails.get(u.getCreatorid());
@@ -764,7 +793,7 @@ public class AdminController {
 	}
 
 	private List<Sysprop> getSpaces(Pager itemcount) {
-		Set<Sysprop> spaces = utils.getAllSpaces();
+		Set<Sysprop> spaces = utils.getAllSpacesAdmin();
 		itemcount.setCount(spaces.size());
 		LinkedList<Sysprop> list = new LinkedList<>(spaces.stream().
 				filter(s -> !utils.isDefaultSpace(s.getName())).collect(Collectors.toList()));

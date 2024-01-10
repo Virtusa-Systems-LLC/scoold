@@ -93,7 +93,9 @@
 
 							#macro(navbarlinks)
 								<li><a href="$questionslink" title="$!lang.get('questions.title')" class="$!{questionsSelected}">$!lang.get("questions.title")</a></li>
+								#if($profilelink != "#")
 								<li><a href="$peoplelink" title="$!lang.get('people.title')" class="$!{peopleSelected}">$!lang.get("people.title")</a></li>
+								#end
 								<li><a href="$tagslink" title="$!lang.get('tags.title')" class="$!{tagsSelected}">$!lang.get("tags.title")</a></li>
 								<li><a href="$questionslink/ask" title="$!lang.get('posts.ask')" class="$!{askSelected}">$!lang.get("posts.ask")</a></li>
 								#customnavbarlinks()
@@ -214,7 +216,7 @@
 										#navbarspaces()
 									#end
 									<li>
-										<a class="dropdown-trigger scoold-user-dropdown" href="#!" data-target="user-dropdown">
+										<a class="dropdown-trigger scoold-user-dropdown rep-overlay" href="#!" data-target="user-dropdown" data-votes="$!authUser.votes">
 											<img src="#profilepic($authUser, 'Square50')" width="50" class="profile-pic responsive-img" alt="Avatar">
 											<i class="fa fa-caret-down right"></i></a>
 									</li>
@@ -271,7 +273,9 @@
 								#end
 								<li><a href="$questionslink/ask" title="$!lang.get('posts.ask')" class="$!{askSelected}">$!lang.get("posts.ask")</a></li>
 								<li><a href="$questionslink" title="$!lang.get('questions.title')" class="$!{questionsSelected}">$!lang.get("questions.title")</a></li>
+								#if($profilelink != "#")
 								<li><a href="$peoplelink" title="$!lang.get('people.title')" class="$!{peopleSelected}">$!lang.get("people.title")</a></li>
+								#end
 								<li><a href="$tagslink" title="$!lang.get('tags.title')" class="$!{tagsSelected}">$!lang.get("tags.title")</a></li>
 								#customnavbarlinks()
 								#if ($authenticated)
@@ -316,33 +320,33 @@
 							<div class="row">
 								<div class="col m6 s12">
 									<div>
-										<b>Examples:</b> <code>query</code>, <code>"exact match"</code>, <code>wildcard*</code>,
+										<b>$!lang.get('search.help.examples'):</b> <code>query</code>, <code>"exact match"</code>, <code>wildcard*</code>,
 										<code>wild?ard</code>, <code>wild*rd</code>
 									</div>
 									<div>
-										<b>Fuzzy search:</b> <code>cake~</code> (finds <code>cakes</code>, <code>bake</code>)
+										<b>$!lang.get('search.help.fuzzy'):</b> <code>cake~</code> (finds <code>cakes</code>, <code>bake</code>)
 									</div>
 									<div>
-										<b>Term boost:</b> <code>"red velvet"^4</code>, <code>chocolate^2</code>
+										<b>$!lang.get('search.help.boost'):</b> <code>"red velvet"^4</code>, <code>chocolate^2</code>
 									</div>
 									<div>
-										<b>Field grouping:</b> <code>tags:(+work -"fun-stuff")</code>
+										<b>$!lang.get('search.help.grouping'):</b> <code>tags:(+work -"fun-stuff")</code>
 									</div>
 									<div>
-										<b>Escaping:</b> Escape characters <code>+-&|!(){}[]^"~*?:\</code> with <code>\</code>, e.g. <code>\+</code>
+										<b>$!lang.get('search.help.escaping')</b> <code>+-&|!(){}[]^"~*?:\</code> - e.g. <code>\+</code> <code>\*</code> <code>\!</code>
 									</div>
 								</div>
 								<div class="col m6 s12">
 									<div>
-										<b>Range search:</b> <code>properties.timestamp:[1587729413488 TO *]</code> (inclusive),
-										<code>properties.title:{A TO Z}</code>(excluding A and Z)
+										<b>$!lang.get('search.help.range'):</b> <code>properties.timestamp:[1587729413488 TO *]</code> ($!lang.get('search.help.inclusive')),
+										<code>properties.title:{A TO Z}</code>($!lang.get('search.help.excluding'))
 									</div>
 									<div>
-										<b>Combinations:</b> <code>chocolate AND vanilla</code>, <code>chocolate OR vanilla</code>,
+										<b>$!lang.get('search.help.combine'):</b> <code>chocolate AND vanilla</code>, <code>chocolate OR vanilla</code>,
 										<code>(chocolate OR vanilla) NOT "vanilla pudding"</code>
 									</div>
 									<div>
-										<b>Field search:</b> <code>properties.title:"The Title" AND text</code>
+										<b>$!lang.get('search.help.field'):</b> <code>properties.title:"The Title" AND text</code>
 									</div>
 								</div>
 							</div>
@@ -437,11 +441,14 @@
 		#set($_welcomeMessageJS = "WELCOME_MESSAGE = '$_welcomeMsg'")
 		#set($_welcomeMsgOnLogin = $scooldUtils.getWelcomeMessageOnLogin($authUser))
 		#set($_welcomeMessageOnLoginJS = "WELCOME_MESSAGE_ONLOGIN = '$_welcomeMsgOnLogin'")
+		#set($_welcomeMsgPreLogin = $scooldUtils.getWelcomeMessagePreLogin($authUser, $request))
+		#set($_welcomeMessagePreLoginJS = "WELCOME_MESSAGE_PRELOGIN = '$_welcomeMsgPreLogin'")
 		#set($_confirmMsg = $!lang.get('areyousure'))
 		#set($_confirmMsgJS = "CONFIRM_MSG = '$!_confirmMsg'")
+		#set($isTagCreationAllowed = "TAG_CREATION_ALLOWED = $scooldUtils.config.tagCreationAllowed()")
 		<script nonce="$cspNonce">$ctxPathJS;$isRTLJS;$isAdminJS;$maxTagsJS;$minPassLen;
 			$avatarUploadsEnabledJS;$imgurJS;$cloudinaryJS;
-			$_welcomeMessageJS;$_welcomeMessageOnLoginJS;$_confirmMsgJS;
+			$_welcomeMessageJS;$_welcomeMessageOnLoginJS;$_welcomeMessagePreLoginJS;$_confirmMsgJS;$isTagCreationAllowed;
 			if ('serviceWorker' in navigator) {navigator.serviceWorker.register(CONTEXT_PATH + '/service-worker.js');}
 		</script>
 		<script nonce="$cspNonce" src="$!scriptslink/scoold.js?r=$!rev"></script>

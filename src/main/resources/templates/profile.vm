@@ -4,31 +4,6 @@
 			<div class="card-image">
 				<img src="#profilepic($showUser, 'Profile')" id="profile_${showUser.creatorid}"
 						 class="profile-pic on-profile-page" alt="Profile picture">
-				#if($canEdit)
-				<span class="card-title">
-					#if($showUser.user.identifier.startsWith("fb"))
-						<i class="fa fa-facebook fa-2x" title="Facebook"></i>
-					#elseif($showUser.user.identifier.startsWith("gp"))
-						<i class="fa fa-google fa-2x" title="Google"></i>
-					#elseif($showUser.user.identifier.startsWith("gh"))
-						<i class="fa fa-github fa-2x" title="GitHub"></i>
-					#elseif($showUser.user.identifier.startsWith("in"))
-						<i class="fa fa-linkedin fa-2x" title="LinkedIn"></i>
-					#elseif($showUser.user.identifier.startsWith("tw"))
-						<i class="fa fa-twitter fa-2x" title="Twitter"></i>
-					#elseif($showUser.user.identifier.startsWith("ms"))
-						<i class="fa fa-windows fa-2x" title="Microsoft"></i>
-					#elseif($showUser.user.identifier.startsWith("sl"))
-						<i class="fa fa-slack fa-2x" title="Slack"></i>
-					#elseif($showUser.user.identifier.startsWith("az"))
-						<i class="fa fa-amazon fa-2x" title="Amazon"></i>
-					#elseif($showUser.user.identifier.startsWith("oa2"))
-						<i class="fa fa-openid fa-2x" title="OAuth 2.0"></i>
-					#elseif($showUser.user.identifier.startsWith("ldap"))
-						<i class="fa fa-id-card-o fa-2x" title="LDAP"></i>
-					#end
-				</span>
-				#end
 			</div>
 			<div class="card-content center-align">
 				#if ($canEdit && $canEditAvatar)
@@ -87,7 +62,7 @@
 				#end
 				<div class="viewbox">
 					<span class="largeText">$!{showUser.name}</span>
-					#if ($isAdmin && $showUser.originalName)
+					#if ($isAdmin && $showUser.originalName && $showUser.originalName != $showUser.name)
 						<div class="tooltipped" data-tooltip="Original name">$!{showUser.originalName}</div>
 					#end
 					#if ($showUser.location && !$showUser.location.isEmpty() && !$showUser.anonymityEnabled)
@@ -98,7 +73,7 @@
 					#end
 				</div>
 			</div>
-			#if($scooldUtils.isMod($showUser) || $scooldUtils.isAdmin($showUser))
+			#if($scooldUtils.isModAnywhere($showUser) || $scooldUtils.isAdmin($showUser))
 				#set($hideBadgePanel = "")
 			#else
 				#set($hideBadgePanel = "hide")
@@ -109,7 +84,7 @@
 					<i class="fa fa-asterisk orange-text"></i> $!lang.get('admin')
 				</span>
 				#end
-				#if ($showUser.groups == "mods")#set($hideModIcon = "")#else #set($hideModIcon = "hide")#end
+				#if ($scooldUtils.isModAnywhere($showUser))#set($hideModIcon = "")#else #set($hideModIcon = "hide")#end
 				<span class="chip badgebox black-text moderator-icon ${hideModIcon}">
 					<i class="fa fa-dot-circle-o orange-text"></i> $!lang.get('mod')
 				</span>
@@ -277,6 +252,22 @@
 					#end
 				#end
 
+				#macro(makemodlink $s)
+					#if ($isAdmin && !$scooldUtils.config.modsAccessAllSpaces())
+						#if(!$scooldUtils.isAdmin($showUser))
+						<small>
+							<a href="$profilelink/$showUser.creatorid/make-mod?space=$!s" class="make-mod-btn">
+								#if ($showUser.isModInSpace($s))#set($hidemakemod = "hide")#else#set($unhidemakemod = "hide")#end
+								<span class="#if($showUser.isModInSpace($s))#else hide#end">Unmake mod</span>
+								<span class="#if($showUser.isModInSpace($s))hide#else#end">Make mod</span>
+							</a>
+						</small>
+						#end
+					#end
+				#end
+
+				#macro(spaceboxclass $s)smallspacebox#if(!$scooldUtils.config.modsAccessAllSpaces() && $showUser.isModInSpace($s)) orange-border#end#end
+
 				#if ($showUser.hasSpaces() && $canEdit)
 					#set($userSpaces = $showUser.allSpaces)
 					<h4 class="grey-text text-darken-1 pvs">
@@ -284,10 +275,12 @@
 					</h4>
 					<div class="#if($userSpaces.size() > 5)row#end">
 						#if(!$showUser.hasSpaces() || $showUser.getSpaces().contains($scooldUtils.getDefaultSpace()))
-							<span class="chip smallspacebox">
-								<i class="fa fa-th-large grey-text"></i>
-								<span class="mhm">$!lang.get('defaultspace')</span>
-							</span>
+							#if($userSpaces.size() > 5)<div class="col m6 l4">#end
+								<span class="chip #spaceboxclass('default')">
+									<i class="fa fa-th-large grey-text"></i>
+									<span class="mhm">$!lang.get('defaultspace')  #makemodlink($scooldUtils.getSpaceId('default'))</span>
+								</span>
+							#if($userSpaces.size() > 5)</div>#end
 						#end
 						#foreach($space in $userSpaces)
 						#if(!$scooldUtils.isDefaultSpace($space))
@@ -296,16 +289,12 @@
 							#else
 								#set($spaceString = $scooldUtils.getSpaceName($space))
 							#end
-							#if($userSpaces.size() > 5)
-							<div class="col m6 l4">
-							#end
-								<span class="chip smallspacebox">
+							#if($userSpaces.size() > 5)<div class="col m6 l4">#end
+								<span class="chip #spaceboxclass($space)">
 									<i class="fa fa-th-large grey-text"></i>
-									<span class="mhm">${spaceString}</span>
+									<span class="mhs">${spaceString} #makemodlink($scooldUtils.getSpaceId($space))</span>
 								</span>
-							#if($userSpaces.size() > 5)
-							</div>
-							#end
+							#if($userSpaces.size() > 5)</div>#end
 						#end
 						#end
 					</div>
@@ -386,7 +375,7 @@
 				<div class="row">
 					<div class="col m6">
 						#getreportlink($showUser "$profilelink/$!showUser.creatorid" "chip")
-						#if ($isAdmin)
+						#if ($isAdmin && $scooldUtils.config.modsAccessAllSpaces())
 							#if(!$scooldUtils.isAdmin($showUser))
 								<a href="$profilelink/$showUser.creatorid/make-mod" class="chip make-mod-btn">
 									#if ($showUser.groups == "mods")#set($hidemakemod = "hide")#else#set($unhidemakemod = "hide")#end

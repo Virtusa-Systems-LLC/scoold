@@ -28,6 +28,7 @@ import com.erudika.para.core.utils.Utils;
 import com.erudika.scoold.ScooldConfig;
 import static com.erudika.scoold.ScooldServer.QUESTIONSLINK;
 import static com.erudika.scoold.ScooldServer.SIGNINLINK;
+import com.erudika.scoold.core.Comment;
 import com.erudika.scoold.core.Post;
 import com.erudika.scoold.core.Profile;
 import com.erudika.scoold.core.Profile.Badge;
@@ -42,6 +43,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -55,6 +57,7 @@ import javax.servlet.http.HttpServletResponse;
 import javax.ws.rs.Produces;
 import org.apache.commons.beanutils.BeanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.hc.core5.http.HttpHeaders;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -109,12 +112,13 @@ public class QuestionController {
 
 		Pager itemcount = utils.getPager("page", req);
 		itemcount.setSortby("newest".equals(sortby) ? "timestamp" : "votes");
-		List<Reply> answerslist = getAllAnswers(authUser, showPost, itemcount);
+		List<Reply> answerslist = getAllAnswers(authUser, showPost, itemcount, req);
 		LinkedList<Post> allPosts = new LinkedList<Post>();
 		allPosts.add(showPost);
 		allPosts.addAll(answerslist);
 		utils.getProfiles(allPosts);
 		utils.getComments(allPosts);
+		utils.getLinkedComment(showPost, req);
 		utils.getVotes(allPosts, authUser);
 		utils.updateViewCount(showPost, req, res);
 
@@ -134,6 +138,7 @@ public class QuestionController {
 		if (showPost.getAuthor() != null) {
 			model.addAttribute("ogimage", utils.getFullAvatarURL(showPost.getAuthor(), AvatarFormat.Profile));
 		}
+		triggerQuestionViewEvent(showPost, req);
 		return "base";
 	}
 
@@ -183,7 +188,9 @@ public class QuestionController {
 			updatePost(showPost, authUser);
 			updateLocation(showPost, authUser, location, latlng);
 			utils.addBadgeOnceAndUpdate(authUser, Badge.EDITOR, true);
-			utils.sendUpdatedFavTagsNotifications(showPost, new ArrayList<>(addedTags), req);
+			if (req.getParameter("notificationsDisabled") == null) {
+				utils.sendUpdatedFavTagsNotifications(showPost, new ArrayList<>(addedTags), req);
+			}
 		}
 		model.addAttribute("post", showPost);
 		if (utils.isAjaxRequest(req)) {
@@ -216,7 +223,7 @@ public class QuestionController {
 			followPost(showPost, authUser, emailme);
 		} else if (!showPost.isClosed() && !showPost.isReply()) {
 			//create new answer
-			boolean needsApproval = utils.postNeedsApproval(authUser);
+			boolean needsApproval = utils.postsNeedApproval(req) && utils.userNeedsApproval(authUser);
 			Reply answer = utils.populate(req, needsApproval ? new UnapprovedReply() : new Reply(), "body");
 			Map<String, String> error = utils.validate(answer);
 			if (!error.containsKey("body") && !StringUtils.isBlank(answer.getBody())) {
@@ -336,6 +343,32 @@ public class QuestionController {
 			showPost.update();
 		}
 		return "redirect:" + showPost.getPostLinkForRedirect();
+	}
+
+	@PostMapping("/{id}/make-comment/{answerid}")
+	public String makeComment(@PathVariable String id, @PathVariable String answerid, HttpServletRequest req) {
+		Post question = pc.read(id);
+		Post answer = pc.read(answerid);
+		Profile authUser = utils.getAuthUser(req);
+		if (question == null || answer == null) {
+			return "redirect:" + req.getRequestURI();
+		}
+		if (utils.isMod(authUser) && answer.isReply()) {
+			Profile author = pc.read(answer.getCreatorid());
+			Comment c = new Comment();
+			c.setParentid(answer.getParentid());
+			c.setComment(answer.getBody());
+			c.setCreatorid(answer.getCreatorid());
+			c.setAuthorName(Optional.ofNullable(author).orElse(authUser).getName());
+			c = pc.create(c);
+			if (c != null) {
+				question.addCommentId(c.getId());
+				pc.update(question);
+				answer.delete();
+				return "redirect:" + question.getPostLinkForRedirect();
+			}
+		}
+		return "redirect:" + QUESTIONSLINK + "/" + answer.getParentid();
 	}
 
 	@PostMapping("/{id}/restore/{revisionid}")
@@ -466,13 +499,13 @@ public class QuestionController {
 		});
 	}
 
-	public List<Reply> getAllAnswers(Profile authUser, Post showPost, Pager itemcount) {
+	public List<Reply> getAllAnswers(Profile authUser, Post showPost, Pager itemcount, HttpServletRequest req) {
 		if (showPost == null || showPost.isReply()) {
 			return Collections.emptyList();
 		}
 		List<Reply> answers = new ArrayList<>();
 		Pager p = new Pager(itemcount.getPage(), itemcount.getLimit());
-		if (utils.postsNeedApproval() && (utils.isMine(showPost, authUser) || utils.isMod(authUser))) {
+		if (utils.postsNeedApproval(req) && (utils.isMine(showPost, authUser) || utils.isMod(authUser))) {
 			answers.addAll(showPost.getUnapprovedAnswers(p));
 		}
 		answers.addAll(showPost.getAnswers(itemcount));
@@ -516,7 +549,9 @@ public class QuestionController {
 			List<String> newTags = Arrays.asList(StringUtils.split(tags, ","));
 			HashSet<String> addedTags = new HashSet<>(newTags);
 			addedTags.removeAll(new HashSet<>(Optional.ofNullable(showPost.getTags()).orElse(Collections.emptyList())));
-			showPost.updateTags(showPost.getTags(), newTags);
+			if (newTags.size() >= CONF.minTagsPerPost()) {
+				showPost.updateTags(showPost.getTags(), newTags);
+			}
 			return addedTags;
 		}
 		return Collections.emptySet();
@@ -570,6 +605,25 @@ public class QuestionController {
 			author.removeRep(CONF.answerApprovedRewardAuthor());
 			authUser.removeRep(CONF.answerApprovedRewardVoter());
 			pc.updateAll(Arrays.asList(author, authUser));
+		}
+	}
+
+	private void triggerQuestionViewEvent(Post question, HttpServletRequest req) {
+		if (req != null) {
+			Profile authUser = utils.getAuthUser(req);
+			Map<String, Object> payload = new LinkedHashMap<>(ParaObjectUtils.getAnnotatedFields(authUser, false));
+			if (authUser != null) {
+				payload.put("visitor", ParaObjectUtils.getAnnotatedFields(authUser, false));
+			} else {
+				payload.put("visitor", Collections.emptyMap());
+			}
+			Map<String, String> headers = new HashMap<>();
+			headers.put(HttpHeaders.REFERER, req.getHeader(HttpHeaders.REFERER));
+			headers.put(HttpHeaders.USER_AGENT, req.getHeader(HttpHeaders.USER_AGENT));
+			headers.put("User-IP", req.getRemoteAddr());
+			payload.put("headers", headers);
+			payload.put("question", question);
+			utils.triggerHookEvent("question.view", payload);
 		}
 	}
 }

@@ -110,7 +110,7 @@ Here's an overview of the architecture:
 [JDK 11 or higher](https://openjdk.java.net/) is required to build and run the project. All major operating systems are supported.
 
 1. Create a new app on [ParaIO.com](https://paraio.com) and copy your access keys to a file.
-2. Create Scoold's configuration file named `application.conf` with these properties:
+2. Create Scoold's configuration file named `scoold-application.conf` with these properties:
 	```ini
 	scoold.env = "production"
 	scoold.app_name = "Scoold"
@@ -122,7 +122,7 @@ Here's an overview of the architecture:
 	# (optional) require authentication for viewing content
 	scoold.is_default_space_public = false
 	```
-3. Start Scoold with `java -jar -Dconfig.file=./application.conf scoold-*.jar`.
+3. Start Scoold with `java -jar -Dconfig.file=./scoold-application.conf scoold-*.jar`.
 4. Open [localhost:8000/signin/register](http://localhost:8000/signin/register) and
 register a new account with same email you put in the configuration.
 
@@ -131,7 +131,7 @@ To login with a social account, you must create a developer app with
 [Google](https://console.developers.google.com) or any other identity provider.
 This is not required when you log in with LDAP, SAML or email/password.
 
-Save the obtained API keys in the `application.conf` file that you have created above.
+Save the obtained API keys in the `scoold-application.conf` file that you have created above.
 
 > For all identity providers, you must whitelist the Para host with the appropriate authentication endpoint:
 > - GitHub: `https://paraio.com/github_auth`
@@ -142,15 +142,17 @@ Save the obtained API keys in the `application.conf` file that you have created 
 
 **Note: The Para backend server is deployed separately and is required for Scoold to run.**
 
-1. [Follow this guide to run the Para backend server locally on port 8080](https://paraio.org/docs/#001-intro)
-2. Create a separate folder `scoold` and inside, a new configuration file named `scoold-application.conf` (see example above)
-3. Start Scoold with the following command, pointing it to the location of the Para configuration file:
+1. [Download the latest executable Para JAR package](https://github.com/Erudika/para/releases)
+2. Start Para with the command `java -jar -Dconfig.file=./para-application.conf para-*.jar`
+3. Create a separate folder `scoold` and inside, a new configuration file named `scoold-application.conf` (see example above)
+4. Start Scoold with the following command, pointing it to the location of the Para configuration file:
 	```
 	java -jar -Dconfig.file=./scoold-application.conf \
 	  -Dscoold.autoinit.para_config_file=../para-application.conf scoold-*.jar`
 	```
-On startup, Scoold will try to initialize itself automatically using the root access key for Para. **Alternatively** you
-could provide Scoold with the root access key directly, instead of pointing it to the Para configuration file, like so:
+On startup, Para will initialize and create its own configuration file. Scoold will then try to initialize and
+configure itself automatically by reading the `para-application.conf`. **Alternatively** you could provide
+Scoold with the root access key directly, instead of pointing it to the Para configuration file, like so:
 ```
 	java -jar -Dconfig.file=./scoold-application.conf \
 	  -Dscoold.autoinit.root_app_secret_key="{secret key for root app}" scoold-*.jar`
@@ -168,8 +170,9 @@ data in your Scoold app.
 - The convention is to use `para-application.conf` and `scoold-application.conf` for Para and Scoold respectively.
 - All settings shown here are meant to be kept inside the Scoold configuration file.
 - SMTP settings must be configured before deploying Scoold to production.
+- Scoold **does not have** a default user account with default username and password.
 
-[Read the Para docs](https://paraio.org/docs) for details on how to run and configure your Scoold backend.
+[Read the Para docs](https://paraio.org/docs) for further details on how to run and configure your Scoold backend.
 
 ### Hardware requirements
 
@@ -190,9 +193,11 @@ JVM parameters: e.g. `java -jar -Xms600m -Xmx600m scoold-*.jar`
 ## Configuration
 
 **Scoold requires a persistent and direct connection to a Para server to function properly.**
+By default, Scoold will load its configuration from a file named `application.conf` but that file can be renamed to
+`scoold-application.conf` or `app.conf` and then loaded with the system property `-Dconfig.file=app.conf`.
+The configuration can also be loaded from a [JSON file or a URL](https://github.com/lightbend/config#standard-behavior).
 
-
-Copy this Scoold example configuration to your **`application.conf`** (edit the values if needed):
+Copy this Scoold example configuration to your **`scoold-application.conf`** (edit the values if needed):
 ```ini
 # the name of the application
 scoold.app_name = "Scoold"
@@ -281,7 +286,7 @@ scoold.password_auth_enabled = true
 |`scoold.signup_captcha_secret_key`<br>The reCAPTCHA v3 secret. | ` ` | `String`|
 |`scoold.csp_reports_enabled`<br>Enable/disable automatic reports each time the Content Security Policy is violated. | `false` | `Boolean`|
 |`scoold.csp_header_enabled`<br>Enable/disable the Content Security Policy (CSP) header. | `true` | `Boolean`|
-|`scoold.csp_header`<br>The CSP header value which will overwrite the default one. This can contain one or more `{{nonce}}` placeholders, which will be replaced with an actual nonce on each request. | `Dynamically generated, with nonces` | `String`|
+|`scoold.csp_header`<br>The CSP header value which will overwrite the default one. This can contain one or more `{{nonce}}` placeholders, which will be replaced with an actual nonce on each request. | ` ` | `String`|
 |`scoold.hsts_header_enabled`<br>Enable/disable the `Strict-Transport-Security` security header. | `true` | `Boolean`|
 |`scoold.framing_header_enabled`<br>Enable/disable the `X-Frame-Options` security header. | `true` | `Boolean`|
 |`scoold.xss_header_enabled`<br>Enable/disable the `X-XSS-Protection` security header. | `true` | `Boolean`|
@@ -329,8 +334,10 @@ scoold.password_auth_enabled = true
 |`scoold.security.ldap.user_search_base`<br>LDAP search base, which will be used only if a direct bind is unsuccessfull. | ` ` | `String`|
 |`scoold.security.ldap.user_search_filter`<br>LDAP search filter, for finding users if a direct bind is unsuccessful. | `(cn={0})` | `String`|
 |`scoold.security.ldap.user_dn_pattern`<br>LDAP user DN pattern, which will be comined with the base DN to form the full path to theuser object, for a direct binding attempt. | `uid={0}` | `String`|
-|`scoold.security.ldap.ad_mode_enabled`<br>Enable/disable support for authenticating with Active Directory. If `true` AD is enabled. | `false` | `Boolean`|
-|`scoold.security.ldap.active_directory_domain`<br>AD domain name. Add this *only* if you are connecting to an Active Directory server. | ` ` | `String`||`scoold.security.ldap.bind_dn`<br>LDAP bind DN | ` ` | `String`|
+|`scoold.security.ldap.ad_mode_enabled`<br>Enable/disable support for authenticating with Active Directory. If `true`, AD is enabled. | `false` | `Boolean`|
+|`scoold.security.ldap.active_directory_domain`<br>AD domain name. Add this *only* if you are connecting to an Active Directory server. | ` ` | `String`|
+|`scoold.security.ldap.password_attribute`<br>LDAP password attribute name. | `userPassword` | `String`|
+|`scoold.security.ldap.bind_dn`<br>LDAP bind DN | ` ` | `String`|
 |`scoold.security.ldap.bind_pass`<br>LDAP bind password. | ` ` | `String`|
 |`scoold.security.ldap.username_as_name`<br>Enable/disable the use of usernames for names on Scoold. | `false` | `Boolean`|
 |`scoold.security.ldap.provider` <kbd>Pro</kbd><br>The text on the LDAP sign in button. | `Continue with LDAP` | `String`|
@@ -393,13 +400,14 @@ scoold.password_auth_enabled = true
 |`scoold.security.oauth.download_avatars`<br>Enable/disable OAauth 2.0 avatar downloading to local disk. Used when avatars are large in size. Alternatives: `security.oauthsecond.download_avatars`, `security.oauththird.download_avatars` | `false` | `Boolean`|
 |`scoold.security.oauth.token_delegation_enabled` <kbd>Pro</kbd><br>Enable/disable OAauth 2.0 token delegation. The ID and access tokens will be saved and delegated to Scoold from Para. Alternatives: `security.oauthsecond.token_delegation_enabled`, `security.oauththird.token_delegation_enabled` | `false` | `Boolean`|
 |`scoold.security.oauth.spaces_attribute_name` <kbd>Pro</kbd><br>OAauth 2.0 attribute mapping for users' `spaces`. The spaces can be comma-separated. Alternatives: `security.oauthsecond.spaces_attribute_name`, `security.oauththird.spaces_attribute_name` | `spaces` | `String`|
-|`scoold.security.oauth.groups_attribute_name` <kbd>Pro</kbd><br>OAauth 2.0 attribute mapping for users' `groups`. Alternatives: `security.oauthsecond.groups_attribute_name`, `security.oauththird.groups_attribute_name` | `` | `String`|
+|`scoold.security.oauth.groups_attribute_name` <kbd>Pro</kbd><br>OAauth 2.0 attribute mapping for users' `groups`. Use this for mapping `admin`, `mod` and `user` roles to Scoold users.Alternatives: `security.oauthsecond.groups_attribute_name`, `security.oauththird.groups_attribute_name` | ` ` | `String`|
 |`scoold.security.oauth.mods_equivalent_claim_value` <kbd>Pro</kbd><br>OAauth 2.0 claim used for mapping OAuth2 users having it, to moderators on Scoold. Alternatives: `security.oauthsecond.mods_equivalent_claim_value`, `security.oauththird.mods_equivalent_claim_value` | `mod` | `String`|
 |`scoold.security.oauth.admins_equivalent_claim_value` <kbd>Pro</kbd><br>OAauth 2.0 claim used for mapping OAuth2 users having it, to administrators on Scoold. Alternatives: `security.oauthsecond.admins_equivalent_claim_value`, `security.oauththird.admins_equivalent_claim_value` | `admin` | `String`|
-|`scoold.security.oauth.users_equivalent_claim_value` <kbd>Pro</kbd><br>OAauth 2.0 claim used for **denying access** to OAuth2 users **not** having it. Alternatives: `security.oauthsecond.users_equivalent_claim_value`, `security.oauththird.users_equivalent_claim_value` | ` ` | `String`|
+|`scoold.security.oauth.users_equivalent_claim_value` <kbd>Pro</kbd><br>OAauth 2.0 claim used for **denying access** to OAuth2 users **not** having it, *unless*they already have the admin or moderator roles assigned. Alternatives: `security.oauthsecond.users_equivalent_claim_value`, `security.oauththird.users_equivalent_claim_value` | ` ` | `String`|
 |`scoold.security.oauth.domain`<br>OAauth 2.0 domain name for constructing user email addresses in case they are missing. Alternatives: `security.oauthsecond.domain`, `security.oauththird.domain` | ` ` | `String`|
 |`scoold.security.oauth.provider`<br>The text on the button for signing in with OAuth2 or OIDC. | `Continue with OpenID Connect` | `String`|
 |`scoold.security.oauth.appid_in_state_param_enabled`<br>Enable/disable the use of the OAauth 2.0 state parameter to designate your Para app id. Some OAauth 2.0 servers throw errors if the length of the state parameter is less than 8 chars. | `true` | `Boolean`|
+|`scoold.security.oauth.send_scope_to_token_endpoint`<br>Enable/disable sending the OAauth 2.0 scope in the token request. Some OAuth 2.0 servers require this to be turned off. | `true` | `Boolean`|
 
 ## Posts
 
@@ -407,7 +415,7 @@ scoold.password_auth_enabled = true
 |  ---                       | ---           | ---  |
 |`scoold.new_users_can_comment`<br>Enable/disable the ability for users with reputation below 100 to comments on posts. | `true` | `Boolean`|
 |`scoold.posts_need_approval`<br>Enable/disable the need for approval of new posts by a moderator.  | `false` | `Boolean`|
-|`scoold.answers_approved_by`<br>Controls who is able to mark an answer as accepted/approved. Possible values are `default` (author and moderators), `admins` (admins only), `moderators` (moderators and admins). | `default` | `String`|
+|`scoold.answers_approved_by`<br>Controls who is able to mark an answer as accepted. Possible values are `default` (author and moderators), `admins` (admins only), `moderators` (moderators and admins). | `default` | `String`|
 |`scoold.wiki_answers_enabled` <kbd>Pro</kbd><br>Enable/disable the ability for users to create wiki-style answers, editable by everyone. | `true` | `Boolean`|
 |`scoold.media_recording_allowed` <kbd>Pro</kbd><br>Enable/disable support for attaching recorded videos and voice messages to posts. | `true` | `Boolean`|
 |`scoold.delete_protection_enabled`<br>Enable/disable the ability for authors to delete their own question, when it already has answers and activity. | `true` | `Boolean`|
@@ -423,7 +431,7 @@ scoold.password_auth_enabled = true
 |`scoold.nearme_feature_enabled`<br>Enable/disable the ability for users to attach geolocation data to questions and location-based filtering of questions. | `false` | `Boolean`|
 |`scoold.merge_question_bodies`<br>Enable/disable the merging of question bodies when two questions are merged into one. | `true` | `Boolean`|
 |`scoold.max_similar_posts`<br>The maximum number of similar posts which will be displayed on the side. | `7` | `Integer`|
-|`scoold.default_question_tag`<br>The default question tag, used when no other tags are provided by its author. | `question` | `String`|
+|`scoold.default_question_tag`<br>The default question tag, used when no other tags are provided by its author. | ` ` | `String`|
 |`scoold.posts_rep_threshold`<br>The minimum reputation an author needs to create a post without approval by moderators. This is only required if new posts need apporval. | `100` | `Integer`|
 
 ## Spaces
@@ -432,6 +440,7 @@ scoold.password_auth_enabled = true
 |  ---                       | ---           | ---  |
 |`scoold.auto_assign_spaces`<br>A comma-separated list of spaces to assign to all new users. | ` ` | `String`|
 |`scoold.reset_spaces_on_new_assignment`<br>Spaces delegated from identity providers will overwrite the existing ones for users. | `true` | `Boolean`|
+|`scoold.mods_access_all_spaces`<br>By default, moderators have access to and can edit content in all spaces. When disabled, moderators can only access the spaces they are assigned to by admins. | `true` | `Boolean`|
 
 ## Reputation and Rewards
 
@@ -480,8 +489,9 @@ scoold.password_auth_enabled = true
 | Property key & Description | Default Value | Type |
 |  ---                       | ---           | ---  |
 |`scoold.default_language_code`<br>The default language code to use for the site. Set this to make the site load a different language from English. | ` ` | `String`|
-|`scoold.welcome_message`<br>Adds a brief intro text inside a banner at the top of the main page for new visitors to see. | ` ` | `String`|
-|`scoold.welcome_message_onlogin`<br>Adds a brief intro text inside a banner at the top of the 'Sign in' page only. | ` ` | `String`|
+|`scoold.welcome_message`<br>Adds a brief intro text inside a banner at the top of the main page for new visitors to see.Not shown to authenticated users. | ` ` | `String`|
+|`scoold.welcome_message_onlogin`<br>Adds a brief intro text inside a banner at the top of the page. Shown to authenticated users only. | ` ` | `String`|
+|`scoold.welcome_message_prelogin`<br>Adds a brief intro text inside a banner at the top of the page. Shown only on the 'Sign in' page. | ` ` | `String`|
 |`scoold.dark_mode_enabled`<br>Enable/disable the option for users to switch to the dark theme. | `true` | `Boolean`|
 |`scoold.meta_description`<br>The content inside the description `<meta>` tag. | `Scoold is friendly place for knowledge sharing and collaboration...` | `String`|
 |`scoold.meta_keywords`<br>The content inside the keywords `<meta>` tag. | `knowledge base, knowledge sharing, collaboration, wiki...` | `String`|
@@ -493,12 +503,16 @@ scoold.password_auth_enabled = true
 |`scoold.footer_html`<br>Some custom HTML content to be added to the website footer. | ` ` | `String`|
 |`scoold.navbar_link1_url`<br>The URL of an extra custom link which will be added to the top navbar. | ` ` | `String`|
 |`scoold.navbar_link1_text`<br>The title of an extra custom link which will be added to the top navbar. | `Link1` | `String`|
+|`scoold.navbar_link1_target`<br>The target attribute of an extra custom link which will be added to the top navbar. | ` ` | `String`|
 |`scoold.navbar_link2_url`<br>The URL of an extra custom link which will be added to the top navbar. | ` ` | `String`|
 |`scoold.navbar_link2_text`<br>The title of an extra custom link which will be added to the top navbar. | `Link2` | `String`|
+|`scoold.navbar_link2_target`<br>The target attribute of an extra custom link which will be added to the top navbar. | ` ` | `String`|
 |`scoold.navbar_menu_link1_url`<br>The URL of an extra custom link which will be added to user's dropdown menu. Only shown to authenticated users. | ` ` | `String`|
 |`scoold.navbar_menu_link1_text`<br>The title of an extra custom link which will be added to the user's dropdown menu. | `Menu Link1` | `String`|
+|`scoold.navbar_menu_link1_target`<br>The target attribute of an extra custom link which will be added to user's dropdown menu. | ` ` | `String`|
 |`scoold.navbar_menu_link2_url`<br>The URL of an extra custom link which will be added to user's dropdown menu. Only shown to authenticated users. | ` ` | `String`|
 |`scoold.navbar_menu_link2_text`<br>The title of an extra custom link which will be added to the user's dropdown menu. | `Menu Link2` | `String`|
+|`scoold.navbar_menu_link2_target`<br>The target attribute of an extra custom link which will be added to the user's dropdown menu. | ` ` | `String`|
 |`scoold.always_hide_comment_forms`<br>Enable/disable a visual tweak which keeps all comment text editors closed at all times. | `true` | `Boolean`|
 |`scoold.footer_links_enabled`<br>Enable/disable all links in the website footer. | `true` | `Boolean`|
 |`scoold.emails_footer_html`<br>The HTML code snippet to embed at the end of each transactional email message. | `<a href="{host_url}">{app_name}</a> &bull; <a href="https://scoold.com">Powered by Scoold</a>` | `String`|
@@ -619,8 +633,10 @@ scoold.password_auth_enabled = true
 |`scoold.autoinit.para_config_file`<br>Does the same as `scoold.autoinit.root_app_secret_key` but tries to read the secret key for the root Para app from the Para configuration file, wherever that may be. | ` ` | `String`|
 |`scoold.sitemap_enabled`<br>Enable/disable the generation of `/sitemap.xml`. | `true` | `Boolean`|
 |`scoold.access_log_enabled`<br>Enable/disable the Scoold access log. | `false` | `Boolean`|
-|`scoold.user_autocomplete_details_enabled`<kbd>Pro</kbd><br>Enable/disable extra details when displaying user results in autocomplete. | `false` | `Boolean`|
-|`scoold.user_autocomplete_max_results`<kbd>Pro</kbd><br>Controls the maximum number of search results in users' autocomplete. | `10` | `Integer`|
+|`scoold.user_autocomplete_details_enabled` <kbd>pro</kbd><br>Enable/disable extra details when displaying user results in autocomplete. | `false` | `Boolean`|
+|`scoold.user_autocomplete_max_results` <kbd>pro</kbd><br>Controls the maximum number of search results in users' autocomplete. | `10` | `Integer`|
+|`scoold.users_discoverability_enabled`<br>Enable/disable discoverability of users on the site. If disabled, user profiles and the users page will be hidden for all except admins. | `true` | `Boolean`|
+|`scoold.notifications_as_reports_enabled`<br>Enable/disable copies of new content notifications in the form of reports on the site.  Instead of checking their email, mods will be able to view and act on those on the reports page. | `false` | `Boolean`|
 
 </details>
 
@@ -651,6 +667,9 @@ to it from this repository.
 	Since the configuration files do not define `scoold.app_secret_key` and `scoold.para_secret_key`, these secrets will be populated automatically upon initialization.
 3. `$ docker compose up`
 
+Finally, open `locahost:8000/signin/register` and create a new account. If you've configured your email with
+`scoold.admins = "my@email"` and you sign up with the same email, you will become admin automatically.
+
 To stop the containers use <kbd>Ctrl</kbd> + <kbd>C</kbd>.
 
 **Important:** Scoold will connect to Para on `http://para:8080`, inside the Docker container environment.
@@ -660,17 +679,17 @@ specified in `scoold.security.redirect_uri`. Para must be a publicly accessible 
 requests will fail.
 
 If you prefer, you can run the Scoold container outside of Docker Compose.
-First, have your Scoold `application.conf` configuration file ready in the current directory and run this command:
+First, have your Scoold `scoold-application.conf` configuration file ready in the current directory and run this command:
 
 ```
-$ docker run -ti -p 8000:8000 --rm -v $(pwd)/application.conf:/scoold/application.conf \
+$ docker run -ti -p 8000:8000 --rm -v $(pwd)/scoold-application.conf:/scoold/application.conf \
   -e JAVA_OPTS="-Dconfig.file=/scoold/application.conf" erudikaltd/scoold:latest_stable
 ```
 
 For **Scoold Pro** the images are located in a private registry. You can get access to it once you purchase a Pro license.
 The run command for **Scoold Pro** is similar with the only difference being the uploads volume:
 ```
-$ docker run -ti -p 8000:8000 --rm -v $(pwd)/application.conf:/scoold-pro/application.conf \
+$ docker run -ti -p 8000:8000 --rm -v $(pwd)/scoold-application.conf:/scoold-pro/application.conf \
   -v scoold-uploads:/scoold-pro/uploads -e JAVA_OPTS="-Dconfig.file=/scoold-pro/application.conf" \
   374874639893.dkr.ecr.eu-west-1.amazonaws.com/scoold-pro:latest_stable
 ```
@@ -795,7 +814,7 @@ $ heroku restart --app myscooldapp
 1. Create a droplet running Ubuntu and SSH into it
 2. Create a user `ubuntu` with `adduser ubuntu`
 3. Execute (as root) `wget https://raw.githubusercontent.com/Erudika/scoold/master/installer.sh && bash installer.sh`
-4. Copy the configuration file to your droplet: `scp application.conf root@123.234.12.34:/home/ubuntu`
+4. Copy the configuration file to your droplet: `scp scoold-application.conf root@123.234.12.34:/home/ubuntu`
 5. Restart Scoold with `ssh root@123.234.12.34 "systemctl restart scoold.service"`
 6. Go to `http://123.234.12.34:8000` and verify that Scoold is running (use the correct IP address of your droplet)
 7. Configure SSL on DigitalOcean or install nginx + letsencrypt on your droplet (see instructions below)
@@ -809,7 +828,7 @@ $ heroku restart --app myscooldapp
 **Lightsail**
 
 1. Click the button above
-2. Choose "Linux", "OS only", "Ubuntu 18.04 LTS"
+2. Choose "Linux", "OS only", "Ubuntu 18.04 LTS" (or later version)
 3. Click "+ Add launch script" and copy/paste the contents of [installer.sh](https://github.com/Erudika/scoold/blob/master/installer.sh)
 4. Download the default SSH key pair or upload your own
 5. Choose the 512MB instance or larger (1GB recommended)
@@ -830,7 +849,7 @@ configure Scoold to work with Amazon Cognito:
 1. Create a Cognito user pool (if you don't have one already)
 2. Create a Cognito App client with the OAuth 2.0 authorization code grant enabled:
 3. Create a Cognito login subdomain for your app client like this: `https://scoold.auth.eu-west-1.amazoncognito.com`
-4. Edit the Scoold configuration file `application.conf` and add a new OAuth 2.0 authentication provider:
+4. Edit the Scoold configuration file `scoold-application.conf` and add a new OAuth 2.0 authentication provider:
 	```ini
 	scoold.oa2_app_id = "cognito_app_client_id"
 	scoold.oa2_secret = "cognito_app_client_secret"
@@ -851,7 +870,7 @@ Make sure you whitelist your Para authentication endpoint with Cognito `https://
 2. Fill in the required parameters
 3. Launch the container
 4. Go to your container and press "Connect" using `/bin/sh`
-5. In the terminal type in `vi application.conf`, hit `i` and paste in your configuration
+5. In the terminal type in `vi scoold-application.conf`, hit `i` and paste in your configuration
 6. Hit `Esc` and type in `:wq` then restart your container
 Another option is to attach a [secret volume](https://docs.microsoft.com/en-us/azure/container-instances/container-instances-volume-secret)
 to your container, containing the configuration. It should be mounted as `/scoold/application.conf`.
@@ -872,7 +891,7 @@ The instructions for Tomcat in particular are:
 1. Generate a WAR package with `mvn -Pwar package`
 2. Rename the WAR package to `ROOT.war` if you want it deployed to the root context or leave it as is
 3. Put the WAR package in `Tomcat/webapps/` & start Tomcat
-4. Put `application.conf` in `Tomcat/webapps/scoold-folder/WEB-INF/classes/` & restart Tomcat
+4. Copy config file `cp scoold-application.conf Tomcat/webapps/scoold-folder/WEB-INF/classes/application.conf` & restart Tomcat
 
 Scoold is compatible with Tomcat 9+.
 
@@ -889,7 +908,7 @@ Scoold and Scoold Pro. Simply go to the Administration page and download all you
 Then on the target installation go to the Administration page and import the ZIP file which contains the backup.
 
 **Important:** All data will be overwritten on restore, so it's highly recommended that the target Scoold installation
-is fresh and containing no data.
+is fresh and contains no data.
 
 When using the default H2 database, you can also copy the `./data` directory to the new installation or just copy all
 `*.db` files. The data directory also contains Lucene index folders for each app, e.g. `./data/scoold-lucene`. These
@@ -1067,13 +1086,13 @@ For **Gmail** you have to turn on "Less secure app access" in your Google accoun
 ## Email verification
 
 You can enable or disable the email verification step by setting `scoold.security.allow_unverified_emails = true`
-(in Scoold's `application.conf`). By default, email verification is turned off when Scoold is running in development mode.
+(in Scoold's `scoold-application.conf`). By default, email verification is turned off when Scoold is running in development mode.
 This will allow new users to register with fake emails and Scoold will not send them a confirmation email. It's useful
 for testing purposes or in certain situations where you want to programmatically sign up users who don't have an email.
 
 ## reCAPTCHA support
 
-You can protect signups and password reset functionality with reCAPTCHA v3. First you will need to register a new domain
+You can protect signups and password reset functionality with reCAPTCHA v3. First, you will need to register a new domain
 at [Google reCAPTCHA](https://www.google.com/recaptcha/admin). Create a new reCAPTCHA v3, add your site to the whitelist
 and copy the two keys - a clientside key (site key) and a serverside key (secret). Then, protect the pages
 `/signin/register` and `/signin/iforgot` by adding these properties to your configuration:
@@ -1138,9 +1157,9 @@ scoold.host_url = "https://your.scoold.url"
 ```
 This is required for authentication requests to be redirected back to the origin.
 
-**Important:** You must to whitelist the [Para endpoints](https://paraio.org/docs/#031-github) in the admin consoles of
+**Important:** You must whitelist the [Para endpoints](https://paraio.org/docs/#031-github) in the admin consoles of
 each authentication provider. For example, for GitHub you need to whitelist `https://parahost.com/github_auth` as a
-callback URL (redirect URL). Same thing applies for the other providers. For these two providers you need to whitelist
+callback URL (redirect URL). The same thing applies for the other providers. For these two providers you need to whitelist
 these two URLs, containing the public address of Scoold:
 ```
 https://myscoold.com
@@ -1153,7 +1172,7 @@ pointing to the URL of your Scoold server.
 
 In some cases ([see related issue](https://github.com/Erudika/scoold/issues/199)) you want to have Scoold connect to
 Para which is hosted somewhere on your local network and logging in with some authentication providers, like Microsoft,
-doesn't work. In such cases you would see an error "redirect_uri mismatch" or "invalid redirect_uri - must start with
+doesn't work. In such cases, you would see an error "redirect_uri mismatch" or "invalid redirect_uri - must start with
 https:// or http://localhost". To make it work you can set `scoold.security.redirect_uri = "https://public-para.host"`
 while still keeping `scoold.para_endpoint = "http://local-ip:8080"`.
 
@@ -1214,7 +1233,7 @@ immediately.
 
 #### Advanced attribute mapping
 
-The basic profile data attributes (name, email, etc.) can be extracted from a complex response payload which is returned
+The basic profile data attributes (name, email, etc.) can be extracted from a complex response payload that is returned
 from the identity provider's `userinfo` endpoint. You can use JSON pointer syntax to locate attribute values within a
 more complex JSON payload like this one:
 ```
@@ -1311,7 +1330,7 @@ for other providers, such as Auth0.
    - Add `http://para-host:8080/oauth2_auth` as a login redirect URI
    - Use the "Authorization Code" flow
    - Select	that you want **client credentials**
-2. Copy the client credentials (client id, secret) to your Scoold `application.conf` file:
+2. Copy the client credentials (client id, secret) to your Scoold `scoold-application.conf` file:
 	```ini
 	scoold.oa2_app_id = "0oa123...."
 	scoold.oa2_secret = "secret"
@@ -1336,7 +1355,7 @@ as its authentication provider. The steps are similar to other OAuth2.0 identity
 4. Choose *New registration*
 5. Put the name of the new app, and select supported account types (accoding to your requirements)
 6. Provide the *Redirect URI* - it needs to point to Para's `/oauth2_auth` endpoint (make sure that
-   this URL is accessible from your users' devices). For development purposes `http://localhost:8080/oauth2_auth`
+   this URL is accessible from your users' devices). For development purposes, `http://localhost:8080/oauth2_auth`
    is probably sufficient.
 7. Click *Register*.
 8. Copy the *Application (client) ID* that you should be seeing now at the top - it is the value for `scoold.oa2_app_id`
@@ -1696,6 +1715,16 @@ by your IDP, set `scoold.security.oauth.spaces_attribute_name`, which by default
 attribute should contain comma-separated list of spaces. If the spaces pushed from the IDP do not exist, Scoold will
 create them for you.
 
+There are two ways to assign moderators to spaces - a user can be promoted to moderator and be allowed to access all spaces,
+or, every space can have an individually assigned moderator. The option that controls this operation is:
+```
+# when false, mods are manually assigned per each space
+scoold.mods_access_all_spaces = true
+```
+When the above is set to `false`, administrators can go to the profile page of a user and make them a moderator in the
+spaces they choose. For all other spaces, the user in question will be a regular user.
+Only administrators can promote users to moderators, no matter how the option above is configured.
+
 ## Webhooks
 
 Webhooks are enabled by default in Scoold. To disable this functionality set `scoold.webhooks_enabled = false`. If you
@@ -1710,15 +1739,21 @@ The standard events emitted by Scoold are:
 
 - `question.create` - whenever a new question is created
 - `question.close` - whenever a question is closed
+- `question.view` - whenever a question is viewed by anyone
 - `answer.create` - whenever a new answer is created
 - `answer.accept` - whenever an answer is accepted
 - `report.create` - whenever a new report is created
 - `comment.create` - whenever a new comment is created
+- `user.signin` - whenever a user signs in to the system
 - `user.signup` - whenever a new user is created
+- `user.search` - whenever a user performs a search
 - `revision.restore` - whenever a revision is restored
 - `user.ban` -  <kbd>Pro</kbd> whenever a user is banned
 - `user.mention` -  <kbd>Pro</kbd> whenever a user is mentioned
 - `question.like` - <kbd>Pro</kbd> whenever a question is favorited
+
+The event playloads for events `user.signin`, `question.view` and `user.search` contain extra information about the
+client which made the original request, e.g. IP address, `User-Agent` and `Referrer` headers.
 
 In addition to the standard event, Para also sends webhooks to the following core (CRUD) events, for all object types:
 `create`, `update`, `delete`, `createAll`, `updateAll`, `deleteAll`.
@@ -1774,7 +1809,7 @@ scoold.approved_domains_for_signups = "acme-corp.com,gmail.com"
 
 ## Admins
 
-You can specify the user with administrative privileges in your `application.conf` file:
+You can specify the user with administrative privileges in your `scoold-application.conf` file:
 ```ini
 scoold.admins = "joe@example.com"
 ```
@@ -1833,6 +1868,141 @@ scoold.allowed_upload_formats = "yml,py:text/plain,json:application/json"
 ```
 If the MIME type is not specified in the format `extension:mime_type`, the default `text/plain` is used when serving these
 files.
+
+<details><summary><b>View list of allowed file formats for uploads</b></summary>
+
+| File extension | MIME type               |
+| ---            | ---                     |
+| jpg         | image/jpeg                 |
+| jpeg        | image/jpeg                 |
+| jpe         | image/jpeg                 |
+| gif         | image/gif                  |
+| png         | image/png                  |
+| bmp         | image/bmp                  |
+| tiff        | image/tiff                 |
+| tif         | image/tiff                 |
+| ico         | image/x-icon               |
+| svg         | image/svg+xml              |
+| webp        | image/webp                 |
+| asf         | video/x-ms-asf             |
+| asx         | video/x-ms-asf             |
+| wmv         | video/x-ms-wmv             |
+| wmx         | video/x-ms-wmx             |
+| wm          | video/x-ms-wm              |
+| avi         | video/avi                  |
+| divx        | video/divx                 |
+| flv         | video/x-flv                |
+| mov         | video/quicktime            |
+| qt          | video/quicktime            |
+| mpeg        | video/mpeg                 |
+| mpg         | video/mpeg                 |
+| mpe         | video/mpeg                 |
+| mp4         | video/mp4                  |
+| m4v         | video/mp4                  |
+| ogv         | video/ogg                  |
+| webm        | video/webm                 |
+| mkv         | video/x-matroska           |
+| 3gp         | video/3gpp                 |
+| 3gpp        | video/3gpp                 |
+| 3g2         | video/3gpp2                |
+| 3gp2        | video/3gpp2                |
+| mp3         | audio/mpeg                 |
+| m4a         | audio/mpeg                 |
+| m4b         | audio/mpeg                 |
+| aac         | audio/aac                  |
+| ra          | audio/x-realaudio          |
+| ram         | audio/x-realaudio          |
+| wav         | audio/wav                  |
+| ogg         | audio/ogg                  |
+| oga         | audio/ogg                  |
+| flac        | audio/flac                 |
+| mid         | audio/midi                 |
+| midi        | audio/midi                 |
+| wma         | audio/x-ms-wma             |
+| wax         | audio/x-ms-wax             |
+| mka         | audio/x-matroska           |
+| txt         | text/plain                 |
+| xml         | text/xml                   |
+| yml         | application/x-yaml         |
+| yaml        | application/x-yaml         |
+| json        | application/json           |
+| java        | text/x-java                |
+| py          | text/x-python              |
+| cs          | text/x-csharp              |
+| asc         | text/plain                 |
+| c           | text/x-csrc                |
+| h           | text/x-chdr                |
+| cc          | text/x-c++src              |
+| hh          | text/x-c++hdr              |
+| srt         | text/plain                 |
+| csv         | text/csv                   |
+| tsv         | text/tab-separated-values  |
+| ics         | text/calendar              |
+| rtx         | text/richtext              |
+| css         | text/css                   |
+| vtt         | text/vtt                   |
+| dfxp        | application/ttaf+xml       |
+| rtf         | application/rtf            |
+| pdf         | application/pdf            |
+| tar         | application/x-tar          |
+| zip         | application/zip            |
+| gz          | application/x-gzip         |
+| gzip        | application/x-gzip         |
+| rar         | application/rar            |
+| 7z          | application/x-7z-compressed|
+| psd         | application/octet-stream   |
+| xcf         | application/octet-stream   |
+| doc         | application/msword         |
+| pot         | application/vnd.ms-powerpoint |
+| pps         | application/vnd.ms-powerpoint |
+| ppt         | application/vnd.ms-powerpoint |
+| wri         | application/vnd.ms-write   |
+| xla         | application/vnd.ms-excel   |
+| xls         | application/vnd.ms-excel   |
+| xlt         | application/vnd.ms-excel   |
+| xlw         | application/vnd.ms-excel   |
+| mdb         | application/vnd.ms-access  |
+| mpp         | application/vnd.ms-project |
+| docx        | application/vnd.openxmlformats-officedocument.wordprocessingml.document |
+| docm        | application/vnd.ms-word.document.macroEnabled.12 |
+| dotx        | application/vnd.openxmlformats-officedocument.wordprocessingml.template |
+| dotm        | application/vnd.ms-word.template.macroEnabled.12 |
+| xlsx        | application/vnd.openxmlformats-officedocument.spreadsheetml.sheet |
+| xlsm        | application/vnd.ms-excel.sheet.macroEnabled.12 |
+| xlsb        | application/vnd.ms-excel.sheet.binary.macroEnabled.12 |
+| xltx        | application/vnd.openxmlformats-officedocument.spreadsheetml.template |
+| xltm        | application/vnd.ms-excel.template.macroEnabled.12 |
+| xlam        | application/vnd.ms-excel.addin.macroEnabled.12 |
+| pptx        | application/vnd.openxmlformats-officedocument.presentationml.presentation |
+| pptm        | application/vnd.ms-powerpoint.presentation.macroEnabled.12 |
+| ppsx        | application/vnd.openxmlformats-officedocument.presentationml.slideshow |
+| ppsm        | application/vnd.ms-powerpoint.slideshow.macroEnabled.12 |
+| potx        | application/vnd.openxmlformats-officedocument.presentationml.template |
+| potm        | application/vnd.ms-powerpoint.template.macroEnabled.12 |
+| ppam        | application/vnd.ms-powerpoint.addin.macroEnabled.12 |
+| sldx        | application/vnd.openxmlformats-officedocument.presentationml.slide |
+| sldm        | application/vnd.ms-powerpoint.slide.macroEnabled.12 |
+| onetoc      | application/onenote        |
+| onetoc2     | application/onenote        |
+| onetmp      | application/onenote        |
+| onepkg      | application/onenote        |
+| oxps        | application/oxps           |
+| xps         | application/vnd.ms-xpsdocument |
+| odt         | application/vnd.oasis.opendocument.text |
+| odp         | application/vnd.oasis.opendocument.presentation |
+| ods         | application/vnd.oasis.opendocument.spreadsheet |
+| odg         | application/vnd.oasis.opendocument.graphics |
+| odc         | application/vnd.oasis.opendocument.chart |
+| odb         | application/vnd.oasis.opendocument.database |
+| odf         | application/vnd.oasis.opendocument.formula |
+| wp          | application/wordperfect    |
+| wpd         | application/wordperfect    |
+| key         | application/vnd.apple.keynote |
+| numbers     | application/vnd.apple.numbers |
+| pages       | application/vnd.apple.pages |
+
+</details>
+
 
 By default, the size of uploaded files is unrestricted. To limit the maximum size of uploads, set the following Spring
 Boot system properties:
@@ -2222,7 +2392,7 @@ As an alternative, you can enable SSL and HTTP2 directly in Scoold:
 
 2. Run Scoold using the following command which enables SSL and HTTP2:
 	```
-	java -jar -Dconfig.file=./application.conf \
+	java -jar -Dconfig.file=./scoold-application.conf \
 	 -Dserver.ssl.key-store-type=PKCS12 \
 	 -Dserver.ssl.key-store=scoold-keystore.p12 \
 	 -Dserver.ssl.key-store-password=secret \
@@ -2303,7 +2473,7 @@ location / {
 ```
 <details><summary><b>Run Scoold with this command which enables TLS, HTTP2 and mTLS.</b></summary>
 
-    java -jar -Dconfig.file=./application.conf \
+    java -jar -Dconfig.file=./scoold-application.conf \
      -Dserver.ssl.key-store-type=PKCS12 \
      -Dserver.ssl.key-store=scoold-keystore.p12 \
      -Dserver.ssl.key-store-password=secret \
@@ -2336,7 +2506,7 @@ keytool -v -importcert -file para.local.pem -alias para -keystore scoold-para-tr
 ```
 <details><summary><b>Run Para with this command which enables TLS, HTTP2 and mTLS.</b></summary>
 
-    java -jar -Dconfig.file=/para/application.conf \
+    java -jar -Dconfig.file=/para/para-application.conf \
      -Dserver.ssl.key-store-type=PKCS12 \
      -Dserver.ssl.key-store=para-keystore.p12 \
      -Dserver.ssl.key-store-password=secret \
@@ -2352,7 +2522,7 @@ keytool -v -importcert -file para.local.pem -alias para -keystore scoold-para-tr
 </details>
 <details><summary><b>Run Scoold with this command which enables TLS, HTTP2 and mTLS.</b></summary>
 
-    java -jar -Dconfig.file=/scoold/application.conf \
+    java -jar -Dconfig.file=/scoold/scoold-application.conf \
      -Dserver.ssl.key-store-type=PKCS12 \
      -Dserver.ssl.key-store=scoold-keystore.p12 \
      -Dserver.ssl.key-store-password=secret \
@@ -2508,6 +2678,9 @@ scoold.comment_emails_enabled = false
 
 # comment input box toggle
 scoold.always_hide_comment_forms = true
+
+# show/hide user profiles and users page
+scoold.users_discoverability_enabled = true
 ```
 
 ### Custom Logo
@@ -2715,7 +2888,7 @@ $ mvn install
 ```
 To run a local instance of Scoold for development, use:
 ```sh
-$ mvn -Dconfig.file=./application.conf spring-boot:run
+$ mvn -Dconfig.file=./scoold-application.conf spring-boot:run
 ```
 
 To generate a WAR package, run:

@@ -24,10 +24,10 @@ import com.erudika.para.core.utils.Para;
 import static com.erudika.scoold.ScooldServer.SIGNINLINK;
 import static com.erudika.scoold.ScooldServer.SIGNOUTLINK;
 import com.typesafe.config.ConfigObject;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 import javax.inject.Named;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
@@ -1564,6 +1564,17 @@ public class ScooldConfig extends Config {
 		return getConfigBoolean("security.oauth" + a + ".appid_in_state_param_enabled", true);
 	}
 
+	@Documented(position = 1502,
+			identifier = "security.oauth.send_scope_to_token_endpoint",
+			value = "true",
+			type = Boolean.class,
+			category = "OAuth 2.0 Authentication",
+			description = "Enable/disable sending the OAauth 2.0 scope parameter in the token request. "
+					+ "Some OAuth 2.0 servers require this to be turned off.")
+	public boolean oauthSendScopeToTokenEndpointEnabled(String a) {
+		return getConfigBoolean("security.oauth" + a + ".send_scope_to_token_endpoint", true);
+	}
+
 	/* **************************************************************************************************************
 	 * Posts                                                                                                  Posts *
 	 ****************************************************************************************************************/
@@ -1592,7 +1603,7 @@ public class ScooldConfig extends Config {
 			identifier = "answers_approved_by",
 			value = "default",
 			category = "Posts",
-			description = "Controls who is able to mark an answer as accepted/approved. "
+			description = "Controls who is able to mark an answer as accepted. "
 					+ "Possible values are `default` (author and moderators), `admins` (admins only), `moderators` "
 					+ "(moderators and admins).")
 	public String answersApprovedBy() {
@@ -1794,6 +1805,17 @@ public class ScooldConfig extends Config {
 			description = "Spaces delegated from identity providers will overwrite the existing ones for users.")
 	public boolean resetSpacesOnNewAssignment(boolean def) {
 		return getConfigBoolean("reset_spaces_on_new_assignment", def);
+	}
+
+	@Documented(position = 1691,
+			identifier = "mods_access_all_spaces",
+			value = "true",
+			type = Boolean.class,
+			category = "Spaces",
+			description = "By default, moderators have access to and can edit content in all spaces. "
+					+ "When disabled, moderators can only access the spaces they are assigned to by admins.")
+	public boolean modsAccessAllSpaces() {
+		return getConfigBoolean("mods_access_all_spaces", true);
 	}
 
 	/* **************************************************************************************************************
@@ -2143,7 +2165,8 @@ public class ScooldConfig extends Config {
 	@Documented(position = 2030,
 			identifier = "welcome_message",
 			category = "Customization",
-			description = "Adds a brief intro text inside a banner at the top of the main page for new visitors to see.")
+			description = "Adds a brief intro text inside a banner at the top of the main page for new visitors to see."
+					+ "Not shown to authenticated users.")
 	public String welcomeMessage() {
 		return getConfigParam("welcome_message", "");
 	}
@@ -2151,9 +2174,17 @@ public class ScooldConfig extends Config {
 	@Documented(position = 2040,
 			identifier = "welcome_message_onlogin",
 			category = "Customization",
-			description = "Adds a brief intro text inside a banner at the top of the 'Sign in' page only.")
+			description = "Adds a brief intro text inside a banner at the top of the page. Shown to authenticated users only.")
 	public String welcomeMessageOnLogin() {
 		return getConfigParam("welcome_message_onlogin", "");
+	}
+
+	@Documented(position = 2041,
+			identifier = "welcome_message_prelogin",
+			category = "Customization",
+			description = "Adds a brief intro text inside a banner at the top of the page. Shown only on the 'Sign in' page.")
+	public String welcomeMessagePreLogin() {
+		return getConfigParam("welcome_message_prelogin", "");
 	}
 
 	@Documented(position = 2050,
@@ -2550,13 +2581,17 @@ public class ScooldConfig extends Config {
 			description = "A map of external JS scripts. These will be loaded after the main JS script. For example: "
 					+ "`scoold.external_scripts.script1 = \"alert('Hi')\"`")
 	public Map<String, Object> externalScripts() {
+		String prefix = "scoold_external_scripts_";
+		Map<String, Object> ext = new LinkedHashMap<>(System.getenv().keySet().stream().
+				filter(k -> k.startsWith(prefix)).collect(Collectors.
+						toMap(mk -> StringUtils.removeStart(mk, prefix), mv -> System.getenv(mv))));
 		if (getConfig().hasPath("external_scripts")) {
 			ConfigObject extScripts = getConfig().getObject("external_scripts");
 			if (extScripts != null && !extScripts.isEmpty()) {
-				return new LinkedHashMap<>(extScripts.unwrapped());
+				ext.putAll(extScripts.unwrapped());
 			}
 		}
-		return Collections.emptyMap();
+		return ext;
 	}
 
 	@Documented(position = 2410,
@@ -3315,6 +3350,28 @@ public class ScooldConfig extends Config {
 		return getConfigInt("user_autocomplete_max_results", 10);
 	}
 
+	@Documented(position = 3080,
+			identifier = "users_discoverability_enabled",
+			value = "true",
+			type = Boolean.class,
+			category = "Miscellaneous",
+			description = "Enable/disable discoverability of users on the site. If disabled, user profiles and the "
+					+ "users page will be hidden for all except admins.")
+	public boolean usersDiscoverabilityEnabled(boolean isAdmin) {
+		return isAdmin || getConfigBoolean("users_discoverability_enabled", true);
+	}
+
+	@Documented(position = 3090,
+			identifier = "notifications_as_reports_enabled",
+			value = "false",
+			type = Boolean.class,
+			category = "Miscellaneous",
+			description = "Enable/disable copies of new content notifications in the form of reports on the site. "
+					+ " Instead of checking their email, mods will be able to view and act on those on the reports page.")
+	public boolean notificationsAsReportsEnabled() {
+		return getConfigBoolean("notifications_as_reports_enabled", false);
+	}
+
 	/* **********************************************************************************************************/
 
 	public boolean inDevelopment() {
@@ -3375,6 +3432,7 @@ public class ScooldConfig extends Config {
 		settings.put("security.oauth" + a + ".download_avatars", oauthAvatarDownloadingEnabled(a));
 		settings.put("security.oauth" + a + ".domain", oauthDomain(a));
 		settings.put("security.oauth" + a + ".token_delegation_enabled", oauthTokenDelegationEnabled(a));
+		settings.put("security.oauth" + a + ".send_scope_to_token_endpoint", oauthSendScopeToTokenEndpointEnabled(a));
 		return settings;
 	}
 
@@ -3446,7 +3504,8 @@ public class ScooldConfig extends Config {
 				+ "form-action 'self' " + serverUrl() + serverContextPath() + SIGNOUTLINK + "; "
 				+ "connect-src 'self' " + (inProduction() ? serverUrl() : "")
 				+ " maps.googleapis.com api.imgur.com api.cloudinary.com accounts.google.com " + cspConnectSources() + "; "
-				+ "frame-src 'self' *.google.com staticxx.facebook.com " + cspFrameSources() + "; "
+				+ "frame-src 'self' *.google.com " + cspFrameSources() + "; "
+				+ "frame-ancestors 'self'; "
 				+ "font-src 'self' cdnjs.cloudflare.com fonts.gstatic.com fonts.googleapis.com " + cspFontSources() + "; "
 				// unsafe-inline required by MathJax and Google Maps!
 				+ "style-src 'self' 'unsafe-inline' fonts.googleapis.com accounts.google.com "

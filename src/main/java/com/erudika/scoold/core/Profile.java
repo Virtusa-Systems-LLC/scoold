@@ -63,6 +63,7 @@ public class Profile extends Sysprop {
 	@Stored @URL private String website;
 	@Stored private List<String> favtags;
 	@Stored private Set<String> favspaces;
+	@Stored private Set<String> modspaces;
 	@Stored private Set<String> spaces;
 	@Stored private Boolean replyEmailsEnabled;
 	@Stored private Boolean commentEmailsEnabled;
@@ -77,6 +78,7 @@ public class Profile extends Sysprop {
 	@Stored private String pendingEmail;
 	@Stored private Boolean editorRoleEnabled;
 
+	private transient String currentSpace;
 	private transient String newbadges;
 	private transient Integer newreports;
 	private transient User user;
@@ -293,6 +295,25 @@ public class Profile extends Sysprop {
 		this.user = user;
 	}
 
+	public String getCurrentSpace() {
+		return currentSpace;
+	}
+
+	public void setCurrentSpace(String currentSpace) {
+		this.currentSpace = currentSpace;
+	}
+
+	public Set<String> getModspaces() {
+		if (modspaces == null) {
+			modspaces = new LinkedHashSet<>();
+		}
+		return modspaces;
+	}
+
+	public void setModspaces(Set<String> modspaces) {
+		this.modspaces = modspaces;
+	}
+
 	public String getLatlng() {
 		return latlng;
 	}
@@ -347,8 +368,16 @@ public class Profile extends Sysprop {
 		this.favspaces = favspaces;
 	}
 
+	public boolean isModInCurrentSpace() {
+		return isModInSpace(currentSpace);
+	}
+
+	public boolean isModInSpace(String space) {
+		return (getModspaces().contains(space) || getModspaces().contains(ScooldUtils.getInstance().getSpaceId(space)));
+	}
+
 	public Set<String> getSpaces() {
-		if (ScooldUtils.getInstance().isMod(this)) {
+		if (ScooldUtils.getInstance().isMod(this) && ScooldUtils.getConfig().modsAccessAllSpaces()) {
 			ScooldUtils utils = ScooldUtils.getInstance();
 			spaces = utils.getAllSpaces().stream().
 					map(s -> s.getId() + Para.getConfig().separator() + s.getName()).

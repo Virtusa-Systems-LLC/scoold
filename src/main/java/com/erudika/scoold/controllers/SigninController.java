@@ -22,21 +22,27 @@ import com.erudika.para.core.Sysprop;
 import com.erudika.para.core.User;
 import com.erudika.para.core.annotations.Email;
 import com.erudika.para.core.utils.Config;
+import com.erudika.para.core.utils.ParaObjectUtils;
 import com.erudika.para.core.utils.Utils;
 import com.erudika.scoold.ScooldConfig;
 import static com.erudika.scoold.ScooldServer.HOMEPAGE;
 import static com.erudika.scoold.ScooldServer.SIGNINLINK;
+import com.erudika.scoold.core.Profile;
 import com.erudika.scoold.utils.HttpUtils;
 import static com.erudika.scoold.utils.HttpUtils.getBackToUrl;
 import static com.erudika.scoold.utils.HttpUtils.setAuthCookie;
 import com.erudika.scoold.utils.ScooldUtils;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import javax.inject.Inject;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
+import org.apache.hc.core5.http.HttpHeaders;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Controller;
@@ -106,11 +112,10 @@ public class SigninController {
 	@GetMapping("/signin/success")
 	public String signinSuccess(@RequestParam String jwt, HttpServletRequest req, HttpServletResponse res, Model model) {
 		if (!StringUtils.isBlank(jwt)) {
-			loginWithIdToken(jwt, req, res);
+			return loginWithIdToken(jwt, req, res);
 		} else {
 			return "redirect:" + SIGNINLINK + "?code=3&error=true";
 		}
-		return "redirect:" + getBackToUrl(req);
 	}
 
 	@GetMapping(path = "/signin/register")
@@ -152,18 +157,19 @@ public class SigninController {
 			return "redirect:" + SIGNINLINK;
 		}
 		boolean approvedDomain = utils.isEmailDomainApproved(email);
-		if (!utils.isAuthenticated(req) && approvedDomain &&
-				HttpUtils.isValidCaptcha(req.getParameter("g-recaptcha-response"))) {
+		if (!utils.isAuthenticated(req) && HttpUtils.isValidCaptcha(req.getParameter("g-recaptcha-response"))) {
 			boolean goodPass = utils.isPasswordStrongEnough(passw);
-			if (!isEmailRegistered(email) && isSubmittedByHuman(req) && goodPass) {
+			if (!isEmailRegistered(email) && approvedDomain && isSubmittedByHuman(req) && goodPass) {
 				User u = pc.signIn("password", email + ":" + name + ":" + passw, false);
 				if (u != null && u.getActive()) {
 					setAuthCookie(u.getPassword(), req, res);
+					triggerLoginEvent(u, req);
 					return "redirect:" + getBackToUrl(req);
 				} else {
 					verifyEmailIfNecessary(name, email, req);
 				}
 			} else {
+				Map<String, String> errors = new HashMap<String, String>();
 				model.addAttribute("path", "signin.vm");
 				model.addAttribute("title", utils.getLang(req).get("signup.title"));
 				model.addAttribute("signinSelected", "navbtn-hover");
@@ -172,14 +178,15 @@ public class SigninController {
 				model.addAttribute("bademail", email);
 				model.addAttribute("emailPattern", Email.EMAIL_PATTERN);
 				if (!goodPass) {
-					model.addAttribute("error", Collections.singletonMap("passw", utils.getLang(req).get("msgcode.8")));
+					errors.put("passw", utils.getLang(req).get("msgcode.8"));
 				} else {
-					model.addAttribute("error", Collections.singletonMap("email", utils.getLang(req).get("msgcode.1")));
+					errors.put("email", utils.getLang(req).get("msgcode." + (approvedDomain ? "1" : "9")));
 				}
+				model.addAttribute("error", errors);
 				return "base";
 			}
 		}
-		return "redirect:" + SIGNINLINK + (approvedDomain ? "/register?verify=true" : "?code=3&error=true");
+		return "redirect:" + SIGNINLINK + (approvedDomain ? "/register?verify=true" : "?code=9&error=true");
 	}
 
 	@PostMapping("/signin/register/resend")
@@ -294,18 +301,20 @@ public class SigninController {
 		return "redirect:" + getBackToUrl(req);
 	}
 
-	private void loginWithIdToken(String jwt, HttpServletRequest req, HttpServletResponse res) {
+	private String loginWithIdToken(String jwt, HttpServletRequest req, HttpServletResponse res) {
 		User u = pc.signIn("passwordless", jwt, false);
-		onAuthSuccess(u, req, res);
+		return onAuthSuccess(u, req, res);
 	}
 
 	private String onAuthSuccess(User u, HttpServletRequest req, HttpServletResponse res) {
 		if (u != null && utils.isEmailDomainApproved(u.getEmail())) {
 			// the user password in this case is a Bearer token (JWT)
 			setAuthCookie(u.getPassword(), req, res);
+			triggerLoginEvent(u, req);
 			return "redirect:" + getBackToUrl(req);
 		} else if (u != null && !utils.isEmailDomainApproved(u.getEmail())) {
 			logger.warn("Signin failed for {} because that domain is not in the whitelist.", u.getEmail());
+			return "redirect:" + SIGNINLINK + "?code=9&error=true";
 		}
 		return "redirect:" + SIGNINLINK + "?code=3&error=true";
 	}
@@ -417,5 +426,19 @@ public class SigninController {
 			}
 		}
 		return false;
+	}
+
+	private void triggerLoginEvent(User u, HttpServletRequest req) {
+		if (req != null && u != null) {
+			Profile authUser = utils.getAuthUser(req);
+			Map<String, Object> payload = new LinkedHashMap<>(ParaObjectUtils.getAnnotatedFields(authUser, false));
+			Map<String, String> headers = new HashMap<>();
+			headers.put(HttpHeaders.REFERER, req.getHeader(HttpHeaders.REFERER));
+			headers.put(HttpHeaders.USER_AGENT, req.getHeader(HttpHeaders.USER_AGENT));
+			headers.put("User-IP", req.getRemoteAddr());
+			payload.put("user", u);
+			payload.put("headers", headers);
+			utils.triggerHookEvent("user.signin", payload);
+		}
 	}
 }

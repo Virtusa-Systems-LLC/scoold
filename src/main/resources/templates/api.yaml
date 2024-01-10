@@ -48,6 +48,13 @@ paths:
         - posts
       security:
       - scoold_auth: []
+      parameters:
+        - name: notificationsDisabled
+          in: query
+          required: false
+          description: If set, all notifications for newly created posts will be disabled. This is to prevent spamming users when creating posts in bulk.
+          schema:
+            type: boolean
       requestBody:
         description: The request entity
         required: true
@@ -755,6 +762,13 @@ paths:
         - users
       security:
       - scoold_auth: []
+      parameters:
+        - name: operation
+          in: query
+          required: false
+          description: The type of operation for adding multiple spaces - `add`, `remove` or `set`.
+          schema:
+            type: string
       requestBody:
         description: The request entity
         required: true
@@ -1187,6 +1201,12 @@ paths:
           description: If `true`, space will be assigned to all new and existing users
           schema:
             type: boolean
+        - name: needsapproval
+          in: query
+          required: false
+          description: If `false`, space will not require moderators to approve each post.
+          schema:
+            type: boolean
       requestBody:
         required: true
         description: The request body must contain the `name` field as the new name for that space.
@@ -1456,6 +1476,12 @@ paths:
                   description: The binary zip file to restore data from.
                   type: string
                   format: binary
+                isso:
+                  description: Flag to indicate if zip archive is coming from Stack Overflow for Teams
+                  type: boolean
+                deleteall:
+                  description: Flag to delete all existing objects before importing the new archive
+                  type: boolean
       responses:
         '200':
           description: Restore operation hast started but is not necessarily complete.

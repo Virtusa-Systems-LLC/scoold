@@ -20,6 +20,7 @@ package com.erudika.scoold.controllers;
 import com.erudika.para.client.ParaClient;
 import com.erudika.para.core.utils.Config;
 import com.erudika.para.core.utils.Pager;
+import com.erudika.para.core.utils.ParaObjectUtils;
 import com.erudika.para.core.utils.Utils;
 import com.erudika.scoold.ScooldConfig;
 import static com.erudika.scoold.ScooldServer.SEARCHLINK;
@@ -43,11 +44,20 @@ import com.sun.syndication.feed.synd.SyndFeedImpl;
 import com.sun.syndication.io.FeedException;
 import com.sun.syndication.io.SyndFeedOutput;
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import javax.inject.Inject;
 import javax.servlet.http.HttpServletRequest;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.hc.core5.http.HttpHeaders;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.CacheControl;
@@ -94,6 +104,7 @@ public class SearchController {
 		String queryString = StringUtils.trimToEmpty(StringUtils.isBlank(q) ? query : q);
 		// [space query filter] + original query string
 		String qs = utils.sanitizeQueryString(queryString, req);
+		boolean usersPublic = CONF.usersDiscoverabilityEnabled(utils.isAdmin(utils.getAuthUser(req)));
 
 		if ("questions".equals(type)) {
 			questionslist = utils.fullQuestionsSearch(qs, itemcount);
@@ -101,7 +112,7 @@ public class SearchController {
 			answerslist = pc.findQuery(Utils.type(Reply.class), qs, itemcount);
 		} else if ("feedback".equals(type) && utils.isFeedbackEnabled()) {
 			feedbacklist = pc.findQuery(Utils.type(Feedback.class), queryString, itemcount);
-		} else if ("people".equals(type)) {
+		} else if ("people".equals(type) && usersPublic) {
 			userlist = pc.findQuery(Utils.type(Profile.class), getUsersSearchQuery(queryString, req), itemcount);
 		} else if ("comments".equals(type)) {
 			commentslist = pc.findQuery(Utils.type(Comment.class), qs, itemcount);
@@ -111,7 +122,9 @@ public class SearchController {
 			if (utils.isFeedbackEnabled()) {
 				feedbacklist = pc.findQuery(Utils.type(Feedback.class), queryString);
 			}
-			userlist = pc.findQuery(Utils.type(Profile.class), getUsersSearchQuery(queryString, req));
+			if (usersPublic) {
+				userlist = pc.findQuery(Utils.type(Profile.class), getUsersSearchQuery(queryString, req));
+			}
 			commentslist = pc.findQuery(Utils.type(Comment.class), qs, itemcount);
 		}
 		ArrayList<Post> list = new ArrayList<Post>();
@@ -132,6 +145,7 @@ public class SearchController {
 		model.addAttribute("feedbacklist", feedbacklist);
 		model.addAttribute("commentslist", commentslist);
 
+		triggerSearchEvent(type, qs, userlist.size() + questionslist.size() + answerslist.size() + commentslist.size(), req);
 		return "base";
 	}
 
@@ -295,5 +309,26 @@ public class SearchController {
 		}
 		logger.debug("Sitemap generation skipped - public={} auth={}", utils.isDefaultSpacePublic(), utils.isAuthenticated(req));
 		return "<_/>";
+	}
+
+	private void triggerSearchEvent(String type, String query, int results, HttpServletRequest req) {
+		if (req != null) {
+			Profile authUser = utils.getAuthUser(req);
+			Map<String, Object> payload = new LinkedHashMap<>(ParaObjectUtils.getAnnotatedFields(authUser, false));
+			if (authUser != null) {
+				payload.put("visitor", ParaObjectUtils.getAnnotatedFields(authUser, false));
+			} else {
+				payload.put("visitor", Collections.emptyMap());
+			}
+			Map<String, String> headers = new HashMap<>();
+			headers.put(HttpHeaders.REFERER, req.getHeader(HttpHeaders.REFERER));
+			headers.put(HttpHeaders.USER_AGENT, req.getHeader(HttpHeaders.USER_AGENT));
+			headers.put("User-IP", req.getRemoteAddr());
+			payload.put("headers", headers);
+			payload.put("category", type);
+			payload.put("query", query);
+			payload.put("results", results);
+			utils.triggerHookEvent("user.search", payload);
+		}
 	}
 }

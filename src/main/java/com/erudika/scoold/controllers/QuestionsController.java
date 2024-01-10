@@ -72,6 +72,9 @@ public class QuestionsController {
 	private final ParaClient pc;
 
 	@Inject
+	private QuestionController questionController;
+
+	@Inject
 	public QuestionsController(ScooldUtils utils) {
 		this.utils = utils;
 		this.pc = utils.getParaClient();
@@ -87,6 +90,12 @@ public class QuestionsController {
 		model.addAttribute("title", utils.getLang(req).get("questions.title"));
 		model.addAttribute("questionsSelected", "navbtn-hover");
 		return "base";
+	}
+
+	@GetMapping({"/questions/{id}", "/questions/{id}/{title}", "/questions/{id}/{title}/*"})
+	public String getAlias(@PathVariable String id, @PathVariable(required = false) String title,
+			@RequestParam(required = false) String sortby, HttpServletRequest req, HttpServletResponse res, Model model) {
+		return questionController.get(id, title, sortby, req, res, model);
 	}
 
 	@GetMapping("/questions/tag/{tag}")
@@ -148,13 +157,12 @@ public class QuestionsController {
 		res.setStatus(200);
 	}
 
-	@GetMapping("/questions/{filter}")
-	public String getSorted(@PathVariable(required = false) String filter,
-			@RequestParam(required = false) String sortby, HttpServletRequest req, Model model) {
+	@GetMapping({"/questions/favtags", "/questions/local"})
+	public String getSorted(@RequestParam(required = false) String sortby, HttpServletRequest req, Model model) {
 		if (!utils.isDefaultSpacePublic() && !utils.isAuthenticated(req)) {
 			return "redirect:" + SIGNINLINK + "?returnto=" + req.getRequestURI();
 		}
-		getQuestions(sortby, filter, req, model);
+		getQuestions(sortby, req.getServletPath().endsWith("/favtags") ? "favtags" : "local", req, model);
 		model.addAttribute("path", "questions.vm");
 		model.addAttribute("title", utils.getLang(req).get("questions.title"));
 		model.addAttribute("questionsSelected", "navbtn-hover");
@@ -176,7 +184,7 @@ public class QuestionsController {
 			}
 			savePagerToCookie(req, res, p);
 			HttpUtils.setRawCookie("questions-view-compact", compactViewEnabled,
-					req, res, false, "Strict", (int) TimeUnit.DAYS.toSeconds(365));
+					req, res, "Strict", (int) TimeUnit.DAYS.toSeconds(365));
 		}
 		return "redirect:" + QUESTIONSLINK + (StringUtils.isBlank(sortby) ? "" : "?sortby="
 				+ Optional.ofNullable(StringUtils.trimToNull(sortby)).orElse(tab));
@@ -193,29 +201,50 @@ public class QuestionsController {
 		model.addAttribute("includeGMapsScripts", utils.isNearMeFeatureEnabled());
 		model.addAttribute("includeEmojiPicker", true);
 		model.addAttribute("title", utils.getLang(req).get("posts.ask"));
+
+		Question draft = utils.populate(req, new Question(), "title", "body", "tags|,", "location", "space");
+		Sysprop spaceObj = utils.isAuthenticated(req) ? pc.read(utils.getSpaceId(utils.
+				getSpaceIdFromCookie(utils.getAuthUser(req), req))) : pc.read(Post.DEFAULT_SPACE);
+		if (spaceObj != null) {
+			String title = (String) spaceObj.getProperty("titleTemplate");
+			String body = (String) spaceObj.getProperty("bodyTemplate");
+			String tags = (String) spaceObj.getProperty("tagsTemplate");
+			if (!StringUtils.isBlank(title)) {
+				draft.setTitle(title);
+			}
+			if (!StringUtils.isBlank(body)) {
+				draft.setBody(body);
+			}
+			if (!StringUtils.isBlank(tags)) {
+				draft.setTags(Arrays.asList(tags.split(",")));
+			}
+		}
+		model.addAttribute("draftQuestion", draft);
 		return "base";
 	}
 
 	@PostMapping("/questions/ask")
 	public String post(@RequestParam(required = false) String location, @RequestParam(required = false) String latlng,
-			@RequestParam(required = false) String address, String space,
+			@RequestParam(required = false) String address, String space, String postId,
 			HttpServletRequest req, HttpServletResponse res, Model model) {
 		if (utils.isAuthenticated(req)) {
 			Profile authUser = utils.getAuthUser(req);
 			String currentSpace = utils.getValidSpaceIdExcludingAll(authUser, space, req);
-			boolean needsApproval = utils.postNeedsApproval(authUser);
+			boolean needsApproval = utils.postsNeedApproval(req) && utils.userNeedsApproval(authUser);
 			Question q = utils.populate(req, needsApproval ? new UnapprovedQuestion() : new Question(),
 					"title", "body", "tags|,", "location");
 			q.setCreatorid(authUser.getId());
+			q.setAuthor(authUser);
 			q.setSpace(currentSpace);
 			if (StringUtils.isBlank(q.getTagsString())) {
 				q.setTags(Arrays.asList(CONF.defaultQuestionTag().isBlank() ? "" : CONF.defaultQuestionTag()));
 			}
 			Map<String, String> error = utils.validateQuestionTags(q, utils.validate(q), req);
 			if (error.isEmpty()) {
+				String qid = StringUtils.isBlank(postId) ? Utils.getNewId() : postId;
+				q.setId(qid);
 				q.setLocation(location);
-				q.setAuthor(authUser);
-				String qid = q.create();
+				q.create();
 				utils.sendNewPostNotifications(q, req);
 				if (!StringUtils.isBlank(latlng)) {
 					Address addr = new Address(qid + Para.getConfig().separator() + Utils.type(Address.class));
@@ -289,6 +318,29 @@ public class QuestionsController {
 		}
 	}
 
+	@PostMapping("/questions/save-template")
+	public String saveTemplate(@RequestParam(required = false) String title, @RequestParam(required = false) String body,
+			@RequestParam(required = false) String tags, HttpServletRequest req, HttpServletResponse res, Model model) {
+		Profile authUser = utils.getAuthUser(req);
+		if (utils.isAdmin(authUser)) {
+			String space = utils.getSpaceIdFromCookie(authUser, req);
+			Sysprop spaceObj = pc.read(utils.getSpaceId(space));
+			if (spaceObj == null) {
+				spaceObj = utils.buildSpaceObject("default");
+			}
+			spaceObj.addProperty("titleTemplate", title);
+			spaceObj.addProperty("bodyTemplate", body);
+			spaceObj.addProperty("tagsTemplate", tags);
+			pc.update(spaceObj);
+		}
+		if (utils.isAjaxRequest(req)) {
+			res.setStatus(200);
+			return "blank";
+		} else {
+			return "redirect:" + QUESTIONSLINK + "/ask";
+		}
+	}
+
 	public List<Question> getQuestions(String sortby, String filter, HttpServletRequest req, Model model) {
 		Pager itemcount = getPagerFromCookie(req, utils.getPager("page", req));
 		List<Question> questionslist = Collections.emptyList();
@@ -323,7 +375,7 @@ public class QuestionsController {
 			questionslist = pc.findQuery(type, query, itemcount);
 		}
 
-		if (utils.postsNeedApproval() && utils.isMod(authUser)) {
+		if (utils.postsNeedApproval(req) && utils.isMod(authUser)) {
 			Pager p = new Pager(itemcount.getPage(), itemcount.getLimit());
 			List<UnapprovedQuestion> uquestionslist = pc.findQuery(Utils.type(UnapprovedQuestion.class), query, p);
 			List<Question> qlist = new LinkedList<>(uquestionslist);
@@ -350,6 +402,8 @@ public class QuestionsController {
 	private String getQuestionsQuery(HttpServletRequest req, Profile authUser, String sortby, String currentSpace, Pager p) {
 		boolean spaceFiltered = isSpaceFilteredRequest(authUser, currentSpace);
 		String query = utils.getSpaceFilteredQuery(req, spaceFiltered, null, utils.getSpaceFilter(authUser, currentSpace));
+		String spaceFilter = utils.getSpaceFilter(authUser, currentSpace);
+		spaceFilter = StringUtils.isBlank(spaceFilter) || spaceFilter.startsWith("*") ? "" : spaceFilter + " AND ";
 		if ("activity".equals(sortby)) {
 			p.setSortby("properties.lastactivity");
 		} else if ("votes".equals(sortby)) {
@@ -357,24 +411,21 @@ public class QuestionsController {
 		} else if ("answered".equals(sortby)) {
 			p.setSortby("timestamp");
 			String q = "properties.answerid:[* TO *]";
-			query = utils.getSpaceFilteredQuery(req, spaceFiltered,
-					utils.getSpaceFilter(authUser, currentSpace) + " AND " + q, q);
+			query = utils.getSpaceFilteredQuery(req, spaceFiltered, spaceFilter + q, q);
 		} else if ("unanswered".equals(sortby)) {
 			p.setSortby("timestamp");
 			if ("default_pager".equals(p.getName()) && p.isDesc()) {
 				p.setDesc(false);
 			}
 			String q = "properties.answercount:0";
-			query = utils.getSpaceFilteredQuery(req, spaceFiltered,
-					utils.getSpaceFilter(authUser, currentSpace) + " AND " + q, q);
+			query = utils.getSpaceFilteredQuery(req, spaceFiltered, spaceFilter + q, q);
 		} else if ("unapproved".equals(sortby)) {
 			p.setSortby("timestamp");
 			if ("default_pager".equals(p.getName()) && p.isDesc()) {
 				p.setDesc(false);
 			}
 			String q = "properties.answercount:[1 TO *] NOT properties.answerid:[* TO *]";
-			query = utils.getSpaceFilteredQuery(req, spaceFiltered,
-					utils.getSpaceFilter(authUser, currentSpace) + " AND " + q, q);
+			query = utils.getSpaceFilteredQuery(req, spaceFiltered, spaceFilter + q, q);
 		}
 		String tags = StringUtils.trimToEmpty(StringUtils.removeStart(p.getName(), "with_tags:"));
 		if (StringUtils.startsWith(p.getName(), "with_tags:") && !StringUtils.isBlank(tags)) {
@@ -425,7 +476,7 @@ public class QuestionsController {
 	private void savePagerToCookie(HttpServletRequest req, HttpServletResponse res, Pager p) {
 		try {
 			HttpUtils.setRawCookie("questions-filter", Utils.base64enc(ParaObjectUtils.getJsonWriterNoIdent().
-					writeValueAsBytes(p)), req, res, false, "Strict", (int) TimeUnit.DAYS.toSeconds(365));
+					writeValueAsBytes(p)), req, res, "Strict", (int) TimeUnit.DAYS.toSeconds(365));
 		} catch (JsonProcessingException ex) { }
 	}
 
